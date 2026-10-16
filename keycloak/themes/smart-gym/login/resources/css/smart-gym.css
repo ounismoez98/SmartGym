@@ -1,0 +1,24 @@
+:root {
+  --sg-accent: #a3e635;
+  --sg-ink: #17211b;
+}
+
+body {
+  background: radial-gradient(circle at top right, #294b35 0, #101a15 52%, #0b110e 100%);
+}
+
+#kc-header-wrapper {
+  color: var(--sg-accent);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.card-pf {
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 28%);
+}
+
+#kc-login {
+  background-color: #5b8f27;
+  border-color: #5b8f27;
+}
