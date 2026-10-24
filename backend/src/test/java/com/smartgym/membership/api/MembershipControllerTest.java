@@ -205,7 +205,7 @@ class MembershipControllerTest {
 
     @Test
     void unknownMembershipResourcesUseUniformNotFoundJsonForAdministrators() throws Exception {
-        mockMvc.perform(get("/api/membership/employees")
+        mockMvc.perform(get("/api/membership/unknown-resource")
                         .with(roleJwt("gym-admin", "ADMIN")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"))
@@ -280,7 +280,8 @@ class MembershipControllerTest {
         org.assertj.core.api.Assertions.assertThat(employeeRepository.findByKeycloakUserId("provisioned-coach"))
                 .isPresent();
         org.assertj.core.api.Assertions.assertThat(assignmentRepository
-                .existsByCoachSubjectAndMemberSubject("provisioned-coach", "provisioned-member"))
+                .existsByCoachSubjectIgnoreCaseAndMemberSubjectIgnoreCaseAndEndedAtIsNull(
+                        "provisioned-coach", "provisioned-member"))
                 .isTrue();
     }
 

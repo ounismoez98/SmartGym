@@ -60,7 +60,7 @@ public class MemberService {
         List<String> assignedSubjects = null;
         if (!accessChecker.isAdministrator(authentication)) {
             String coachSubject = subject(authentication);
-            assignedSubjects = assignmentRepository.findAllByCoachSubject(coachSubject)
+            assignedSubjects = assignmentRepository.findAllByCoachSubjectIgnoreCaseAndEndedAtIsNull(coachSubject)
                     .stream()
                     .map(CoachAssignment::getMemberSubject)
                     .map(subject -> subject.toLowerCase(java.util.Locale.ROOT))

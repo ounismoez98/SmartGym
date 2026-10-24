@@ -94,7 +94,8 @@ public class MembershipController {
     @GetMapping("/coach/assigned-members")
     @PreAuthorize("hasAnyRole('ADMIN', 'COACH')")
     public List<AssignedMember> assignedMembers(@AuthenticationPrincipal Jwt jwt) {
-        List<String> assignedSubjects = assignmentRepository.findAllByCoachSubject(jwt.getSubject())
+        List<String> assignedSubjects = assignmentRepository
+                .findAllByCoachSubjectIgnoreCaseAndEndedAtIsNull(jwt.getSubject())
                 .stream()
                 .map(assignment -> assignment.getMemberSubject())
                 .toList();

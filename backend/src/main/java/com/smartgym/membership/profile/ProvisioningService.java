@@ -62,7 +62,7 @@ public class ProvisioningService {
             if (memberRepository.findByKeycloakUserId(assignment.memberSubject()).isEmpty()) {
                 throw new IllegalArgumentException("Member profile is not provisioned.");
             }
-            if (!assignmentRepository.existsByCoachSubjectAndMemberSubject(
+            if (!assignmentRepository.existsByCoachSubjectIgnoreCaseAndMemberSubjectIgnoreCaseAndEndedAtIsNull(
                     assignment.coachSubject(), assignment.memberSubject())) {
                 assignmentRepository.save(new CoachAssignment(
                         assignment.coachSubject(), assignment.memberSubject()));

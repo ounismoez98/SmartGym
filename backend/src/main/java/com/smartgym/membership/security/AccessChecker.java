@@ -4,6 +4,8 @@ import java.util.UUID;
 import java.util.Locale;
 
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
 import org.springframework.security.core.Authentication;
@@ -14,12 +16,15 @@ import org.springframework.stereotype.Component;
 public class AccessChecker {
     private final MemberRepository memberRepository;
     private final CoachAssignmentRepository assignmentRepository;
+    private final EmployeeRepository employeeRepository;
 
     public AccessChecker(
             MemberRepository memberRepository,
-            CoachAssignmentRepository assignmentRepository) {
+            CoachAssignmentRepository assignmentRepository,
+            EmployeeRepository employeeRepository) {
         this.memberRepository = memberRepository;
         this.assignmentRepository = assignmentRepository;
+        this.employeeRepository = employeeRepository;
     }
 
     public boolean isOwner(UUID memberId, Authentication authentication) {
@@ -38,9 +43,24 @@ public class AccessChecker {
         }
         return memberRepository.findById(memberId)
                 .map(Member::getKeycloakUserId)
-                .map(memberSubject -> assignmentRepository.existsByCoachSubjectAndMemberSubject(
+                .map(memberSubject -> assignmentRepository
+                        .existsByCoachSubjectIgnoreCaseAndMemberSubjectIgnoreCaseAndEndedAtIsNull(
                         normalize(jwt.getSubject()), normalize(memberSubject)))
                 .orElse(false);
+    }
+
+    public boolean isEmployeeOwner(UUID employeeId, Authentication authentication) {
+        if (!hasRole(authentication, "ROLE_COACH") || !(authentication.getPrincipal() instanceof Jwt jwt)) {
+            return false;
+        }
+        return employeeRepository.findById(employeeId)
+                .map(Employee::getKeycloakUserId)
+                .filter(subject -> normalize(subject).equals(normalize(jwt.getSubject())))
+                .isPresent();
+    }
+
+    public boolean isCoachOwner(UUID employeeId, Authentication authentication) {
+        return isEmployeeOwner(employeeId, authentication);
     }
 
     public boolean isAdministrator(Authentication authentication) {

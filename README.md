@@ -201,6 +201,17 @@ exactly `http://localhost:8088`.
   `PUT /{id}` (ADMIN; MEMBER may change only their own email and phone), and
   `POST /{id}/deactivate` (ADMIN). Deactivation is refused while an ACTIVE
   subscription exists. There is no member `DELETE` endpoint.
+- Employee endpoints delivered under `/api/membership/employees`:
+  `POST` (ADMIN), paginated/filterable `GET` list (ADMIN), `GET /{id}`
+  (ADMIN or the employee's own COACH profile), `PUT /{id}` (ADMIN), and
+  `POST /{id}/deactivate` (ADMIN). There is no employee `DELETE` endpoint.
+- Coach assignment endpoints: `POST
+  /api/membership/employees/{coachId}/members/{memberId}` (ADMIN) assigns an
+  active coach and member; `POST
+  /api/membership/employees/{coachId}/members/{memberId}/unassign` (ADMIN)
+  ends an active assignment without deleting its history; and `GET
+  /api/membership/employees/{coachId}/members` is available to ADMIN or that
+  coach. Keycloak accounts are not created or deactivated by these endpoints.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in
@@ -255,8 +266,9 @@ or browser flows. Browser and Compose checks are not re-verified.
 The delivered scope is the Keycloak-backed authentication and authorization
 vertical slice: Angular sign-in and route guards, the Spring membership
 identity API, role checks, member ownership checks, and development profile
-provisioning. The SPA module pages are placeholders; business CRUD for M1-M4
-is not delivered.
+provisioning, member and employee CRUD, and coach assignments. The SPA module
+pages are placeholders; subscription and payment CRUD and business CRUD for
+the other modules are not delivered.
 
 The following are not yet delivered:
 
