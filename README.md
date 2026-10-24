@@ -32,52 +32,124 @@ The local HTTP configuration is for development only:
 | RabbitMQ management | `http://localhost:15672` |
 | Ollama API | `http://localhost:11434/api/chat` |
 
-The Spring API and its PostgreSQL database are also exposed on host ports
-`8081` and `5433` for local development and provisioning. Browser API calls
-should use the Nginx `/api/...` URLs.
+Compose services are `postgres`, `keycloak-db`, `keycloak`, `rabbitmq`,
+`ollama`, `api`, and `frontend`. The Spring API and PostgreSQL are also
+exposed on host ports `8081` and `5433` for local development and
+provisioning. RabbitMQ exposes AMQP on port `5672` and its management
+interface on `15672`. `keycloak-db` is internal to the Compose network and
+has no host port. Browser API calls should use the Nginx `/api/...` URLs.
 
-1. Copy `.env.example` to `.env` and set unique local-only passwords and a
-   provisioning key. Do not use these development secrets outside your local
-   machine.
-2. Start the core platform:
+### Prerequisites
+
+- Docker Desktop installed and running.
+- Java 21 and Maven, and Node.js, only when developing or running the backend
+  or frontend outside Docker.
+
+### Configure local environment
+
+1. Create the local environment file:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Replace the placeholder values in `.env` with unique local-only
+   credentials. The following are the variables in `.env.example`:
+
+   | Variable | Role | Required by Compose |
+   | --- | --- | --- |
+   | `KEYCLOAK_ADMIN_USERNAME` | Keycloak local administrator username | Yes |
+   | `KEYCLOAK_ADMIN_PASSWORD` | Keycloak local administrator password | Yes |
+   | `POSTGRES_PASSWORD` | Password for the local PostgreSQL databases | Yes |
+   | `PROVISIONING_TOKEN` | Token for the development-only profile provisioning API | Yes |
+   | `RABBITMQ_USER` | RabbitMQ username | Yes |
+   | `RABBITMQ_PASSWORD` | RabbitMQ password | Yes |
+   | `OLLAMA_MODEL` | Ollama model to use; defaults to `qwen2.5:3b` | No |
+
+   Generate a local provisioning token with:
+
+   ```powershell
+   [guid]::NewGuid().ToString("N")
+   ```
+
+   Put the generated value in `.env` for `PROVISIONING_TOKEN`. `.env` is
+   never committed; confirm it is ignored by Git:
+
+   ```powershell
+   git check-ignore .env
+   ```
+
+3. Before starting the services, validate the Compose configuration:
+
+   ```powershell
+   docker compose config --quiet
+   ```
+
+4. Start the platform and inspect the service state:
 
    ```powershell
    docker compose up --build -d
+   docker compose ps
    ```
 
-3. The imported `gym` realm defines the `ADMIN`, `COACH`, and `MEMBER` roles
-   and three passwordless development identities (`gym-admin`, `gym-coach`,
-   and `member-a`). No user password is stored in the realm export. Wait for
-   Keycloak and the API to become healthy, then provision the accounts with
-   local-only passwords:
+   Wait for Keycloak to become healthy, then check that the API logs show
+   startup has completed:
 
    ```powershell
-   $env:KEYCLOAK_ADMIN_USERNAME = "admin"
-   $env:KEYCLOAK_ADMIN_PASSWORD = "<the KEYCLOAK_ADMIN_PASSWORD from .env>"
-   $env:DEV_ADMIN_PASSWORD = "<choose a local-only password>"
-   $env:DEV_COACH_PASSWORD = "<choose a local-only password>"
-   $env:DEV_MEMBER_A_PASSWORD = "<choose a local-only password>"
-   $env:DEV_MEMBER_B_PASSWORD = "<choose a local-only password>"
-   .\scripts\provision-dev.ps1
+   docker compose logs api --tail 50
    ```
 
-   Account usernames are `gym-admin`, `gym-coach`, `member-a`, and
-   `member-b`; `member-b` is added by the script for ownership-isolation
-   tests. The script creates or updates these Keycloak users, applies
-   their application roles, and idempotently provisions their business
-   profiles and coach assignments through the Keycloak Admin API and
-   development provisioning endpoint. It prints the usernames, never their
-   passwords. Passwords are supplied only through environment variables and
-   are not stored in source control. The Keycloak administrator account is
-   infrastructure-only; it is not an application administrator.
-4. Pull the configured local language model once (replace the model tag if
-   `OLLAMA_MODEL` was changed in `.env`):
+### Provision development accounts
 
-   ```powershell
-   docker compose exec ollama ollama pull qwen2.5:3b
-   ```
+The realm import defines the `ADMIN`, `COACH`, and `MEMBER` roles and imports
+three development accounts (`gym-admin`, `gym-coach`, and `member-a`) without
+passwords. The provisioning script adds `member-b` and sets passwords for
+all four accounts.
 
-5. Open `http://localhost:8088` and select **Sign in**.
+The script reads environment variables from the current PowerShell session;
+it does not read `.env` itself. Load the `.env` values into that session:
+
+```powershell
+Get-Content .env | ForEach-Object { if ($_ -match '^\s*([^#=]+)=(.*)$') { Set-Item "env:$($matches[1].Trim())" $matches[2].Trim() } }
+```
+
+In addition to the variables in `.env.example`, set these development-only
+passwords in the same PowerShell session. They are not in `.env.example`:
+
+```powershell
+$env:DEV_ADMIN_PASSWORD = "<choose a local-only password>"
+$env:DEV_COACH_PASSWORD = "<choose a local-only password>"
+$env:DEV_MEMBER_A_PASSWORD = "<choose a local-only password>"
+$env:DEV_MEMBER_B_PASSWORD = "<choose a local-only password>"
+```
+
+`PROVISIONING_TOKEN` is also required by the script and must be present in
+the PowerShell session. Then run:
+
+```powershell
+.\scripts\provision-dev.ps1
+```
+
+Account usernames are `gym-admin`, `gym-coach`, `member-a`, and `member-b`.
+The script creates or updates these Keycloak users, applies their application
+roles, and idempotently provisions their business profiles and coach
+assignments through the Keycloak Admin API and development provisioning
+endpoint. It prints the usernames, never their passwords. Passwords are
+supplied only through environment variables and are not stored in source
+control. The Keycloak administrator account is infrastructure-only; it is
+not an application administrator.
+
+### Pull the Ollama model and sign in
+
+After loading `.env` into the PowerShell session, pull the selected model once.
+`OLLAMA_MODEL` defaults to `qwen2.5:3b`:
+
+```powershell
+docker compose exec ollama ollama pull $env:OLLAMA_MODEL
+```
+
+The Ollama service is deployed locally, but the API does not call Ollama yet.
+Open `http://localhost:8088` and select **Sign in**.
 
 Keycloak credential validation and invalid-credential messages stay on the
 Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
@@ -154,29 +226,69 @@ record. These roles can overlap.
 
 ## Login acceptance status
 
-The automated API tests cover identity/profile responses, missing/malformed
-token `401`, module/admin/coach role checks, onboarding without profile
-creation, and member/coach/admin private-record access checks. A Docker
-Compose smoke run and browser login/logout smoke test were performed with
-development-only accounts.
+`MembershipControllerTest` is the current automated API test class. It uses
+MockMvc, simulated JWTs, and H2; it does not verify live Keycloak signatures
+or browser flows. Browser and Compose checks are not re-verified.
 
-- [x] Compose starts the core platform.
-- [x] Angular loads in a browser.
-- [x] Sign in opens the Smart Gym Keycloak realm login page.
-- [x] Valid credentials return to Angular; invalid credentials show Keycloak
-      feedback.
-- [x] Dashboard shows the authenticated user and the backend `/me` response.
-- [x] Angular calls `GET /api/membership/me` with an access token.
-- [x] Role-aware navigation and direct protected-route authentication work.
-- [x] Reloading a protected Angular URL works.
-- [x] Missing/invalid token returns backend `401`; insufficient permissions
-      return `403`.
-- [x] Member A cannot access Member B's private record (automated API test).
-- [ ] Expired sessions recover without a redirect loop (not explicitly
-      simulated in the browser).
-- [x] Logout ends the Keycloak application session and returns to `/`.
-- [x] Protected content cannot be accessed after logout.
+| Acceptance item | Covered by automated test | Browser/Compose check |
+| --- | --- | --- |
+| Compose starts the core platform | No | not re-verified |
+| Angular loads in a browser | No | not re-verified |
+| Sign-in opens the Keycloak login page; valid and invalid credentials behave as expected | No | not re-verified |
+| Dashboard displays the authenticated identity and membership API response | No | not re-verified |
+| Angular calls `GET /api/membership/me` with an access token | No | not re-verified |
+| Role-aware navigation, protected routes, and reload behavior | No | not re-verified |
+| Missing/malformed token returns `401`; role and ownership denials return `403` | Yes — `MembershipControllerTest` | not re-verified |
+| Member A cannot read another member's private record | Yes — `MembershipControllerTest` | not re-verified |
+| Logout ends the application session and protected content is inaccessible | No | not re-verified |
 
-The business CRUD features for M1-M4, SMTP password recovery, production
-HTTPS, and a full browser simulation of token expiry have not been
-implemented or tested in this first authentication delivery.
+- [ ] Expired sessions recover without a redirect loop (not tested).
+
+## Project status
+
+The delivered scope is the Keycloak-backed authentication and authorization
+vertical slice: Angular sign-in and route guards, the Spring membership
+identity API, role checks, member ownership checks, and development profile
+provisioning. The SPA module pages are placeholders; business CRUD for M1-M4
+is not delivered.
+
+The following are not yet delivered:
+
+- Flyway migrations. The current API configuration uses Hibernate
+  `ddl-auto: update` for the development setup; this is not production schema
+  management.
+- Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
+  only.
+- The administrative LLM assistant. Ollama is deployed, but the API does not
+  call it.
+- SMTP password recovery and production HTTPS.
+
+Current backend tests use MockMvc with simulated JWTs and H2. There are no
+Testcontainers or Angular E2E tests in the repository.
+
+## Troubleshooting
+
+- `required variable ... is missing a value`: `.env` is missing or the
+  referenced variable is empty. Create it from `.env.example` and fill in
+  the required values.
+- The `gym` realm is missing or does not reflect changes to the realm export:
+  Keycloak imports the realm only on its first startup with an empty data
+  volume. To reset the local Keycloak and application data, run:
+
+  ```powershell
+  docker compose down -v
+  docker compose up --build -d
+  ```
+
+  `docker compose down -v` deletes local data, including database contents
+  and downloaded Ollama models.
+- The provisioning script exits immediately: one or more required variables
+  are absent from the current PowerShell session. Load `.env` as described
+  above and set `PROVISIONING_TOKEN`, `DEV_ADMIN_PASSWORD`,
+  `DEV_COACH_PASSWORD`, `DEV_MEMBER_A_PASSWORD`, and
+  `DEV_MEMBER_B_PASSWORD`.
+- To inspect service logs:
+
+  ```powershell
+  docker compose logs <service> --tail 50
+  ```
