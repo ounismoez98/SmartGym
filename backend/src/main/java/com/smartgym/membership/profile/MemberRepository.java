@@ -7,11 +7,17 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface MemberRepository extends JpaRepository<Member, UUID>, JpaSpecificationExecutor<Member> {
-    Optional<Member> findByKeycloakUserId(String keycloakUserId);
+    @Query("select member from Member member "
+            + "where lower(member.keycloakUserId) = lower(:keycloakUserId)")
+    Optional<Member> findByKeycloakUserId(@Param("keycloakUserId") String keycloakUserId);
 
-    List<Member> findAllByKeycloakUserIdIn(Collection<String> keycloakUserIds);
+    @Query("select member from Member member "
+            + "where lower(member.keycloakUserId) in :keycloakUserIds")
+    List<Member> findAllByKeycloakUserIdIn(@Param("keycloakUserIds") Collection<String> keycloakUserIds);
 
     boolean existsByEmailIgnoreCase(String email);
 

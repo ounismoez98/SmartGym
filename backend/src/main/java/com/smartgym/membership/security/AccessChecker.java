@@ -1,6 +1,7 @@
 package com.smartgym.membership.security;
 
 import java.util.UUID;
+import java.util.Locale;
 
 import com.smartgym.membership.profile.CoachAssignmentRepository;
 import com.smartgym.membership.profile.Member;
@@ -27,7 +28,7 @@ public class AccessChecker {
         }
         return memberRepository.findById(memberId)
                 .map(Member::getKeycloakUserId)
-                .filter(jwt.getSubject()::equals)
+                .filter(subject -> normalize(subject).equals(normalize(jwt.getSubject())))
                 .isPresent();
     }
 
@@ -38,7 +39,7 @@ public class AccessChecker {
         return memberRepository.findById(memberId)
                 .map(Member::getKeycloakUserId)
                 .map(memberSubject -> assignmentRepository.existsByCoachSubjectAndMemberSubject(
-                        jwt.getSubject(), memberSubject))
+                        normalize(jwt.getSubject()), normalize(memberSubject)))
                 .orElse(false);
     }
 
@@ -54,5 +55,9 @@ public class AccessChecker {
         return authentication != null
                 && authentication.getAuthorities().stream()
                         .anyMatch(authority -> role.equals(authority.getAuthority()));
+    }
+
+    private static String normalize(String subject) {
+        return subject.toLowerCase(Locale.ROOT);
     }
 }

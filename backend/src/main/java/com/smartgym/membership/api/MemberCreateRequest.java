@@ -4,14 +4,15 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
 
 public record MemberCreateRequest(
         @NotNull UUID keycloakUserId,
-        @Size(max = 100) String firstName,
-        @Size(max = 100) String lastName,
-        @Email @Size(max = 254) String email,
+        @NotBlank @Size(max = 100) String firstName,
+        @NotBlank @Size(max = 100) String lastName,
+        @NotBlank @Email @Size(max = 254) String email,
         @Size(max = 40) String phone,
         @Past LocalDate birthDate) {}

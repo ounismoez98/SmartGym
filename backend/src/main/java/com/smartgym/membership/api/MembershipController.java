@@ -2,6 +2,7 @@ package com.smartgym.membership.api;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -97,7 +98,8 @@ public class MembershipController {
                 .stream()
                 .map(assignment -> assignment.getMemberSubject())
                 .toList();
-        return memberRepository.findAllByKeycloakUserIdIn(assignedSubjects)
+        return memberRepository.findAllByKeycloakUserIdIn(
+                        assignedSubjects.stream().map(subject -> subject.toLowerCase(Locale.ROOT)).toList())
                 .stream()
                 .map(profile -> new AssignedMember(profile.getId(), profile.getDisplayName()))
                 .sorted(Comparator.comparing(AssignedMember::displayName))

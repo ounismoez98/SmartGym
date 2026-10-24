@@ -63,6 +63,7 @@ public class MemberService {
             assignedSubjects = assignmentRepository.findAllByCoachSubject(coachSubject)
                     .stream()
                     .map(CoachAssignment::getMemberSubject)
+                    .map(subject -> subject.toLowerCase(java.util.Locale.ROOT))
                     .distinct()
                     .toList();
             if (assignedSubjects.isEmpty()) {
@@ -81,7 +82,7 @@ public class MemberService {
     }
 
     public MemberResponse create(MemberCreateRequest request, Authentication authentication) {
-        String keycloakUserId = request.keycloakUserId().toString();
+        String keycloakUserId = request.keycloakUserId().toString().toLowerCase(java.util.Locale.ROOT);
         if (memberRepository.findByKeycloakUserId(keycloakUserId).isPresent()) {
             throw conflict("The Keycloak user is already linked to a member.");
         }

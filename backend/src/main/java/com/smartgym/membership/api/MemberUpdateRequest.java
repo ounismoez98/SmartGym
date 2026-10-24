@@ -6,6 +6,7 @@ import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonSetter;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
 
@@ -80,5 +81,12 @@ public class MemberUpdateRequest {
 
     public Set<String> getSuppliedFields() {
         return Set.copyOf(suppliedFields);
+    }
+
+    @AssertTrue(message = "firstName, lastName and email cannot be null or blank when supplied.")
+    public boolean isRequiredFieldsNotNullWhenSupplied() {
+        return (!suppliedFields.contains("firstName") || firstName != null && !firstName.isBlank())
+                && (!suppliedFields.contains("lastName") || lastName != null && !lastName.isBlank())
+                && (!suppliedFields.contains("email") || email != null && !email.isBlank());
     }
 }

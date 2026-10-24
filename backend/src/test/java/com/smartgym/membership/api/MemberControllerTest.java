@@ -114,6 +114,15 @@ class MemberControllerTest {
         mockMvc.perform(post("/api/membership/members")
                         .with(roleJwt("admin-sub", "ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"keycloakUserId":"%s","firstName":"New","lastName":"Member"}
+                                """.formatted(UUID.randomUUID())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+
+        mockMvc.perform(post("/api/membership/members")
+                        .with(roleJwt("admin-sub", "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.keycloakUserId").value(keycloakUserId))
@@ -131,7 +140,8 @@ class MemberControllerTest {
                         .with(roleJwt("admin-sub", "ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"keycloakUserId":"%s","email":"new.member@example.test"}
+                                {"keycloakUserId":"%s","firstName":"New","lastName":"Member",
+                                 "email":"new.member@example.test"}
                                 """.formatted(UUID.randomUUID())))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CONFLICT"));
@@ -182,6 +192,9 @@ class MemberControllerTest {
         mockMvc.perform(get("/api/membership/members/{id}", memberId)
                         .with(roleJwt(memberSubject, "MEMBER")))
                 .andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/members/{id}", memberId)
+                        .with(roleJwt(memberSubject.toUpperCase(java.util.Locale.ROOT), "MEMBER")))
+                .andExpect(status().isOk());
         mockMvc.perform(get("/api/membership/members/{id}", otherMemberId)
                         .with(roleJwt(coachSubject, "COACH")))
                 .andExpect(status().isForbidden());
@@ -208,6 +221,24 @@ class MemberControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value("updated@example.test"))
                 .andExpect(jsonPath("$.phone").value("999"));
+
+        mockMvc.perform(put("/api/membership/members/{id}", memberId)
+                        .with(roleJwt(memberSubject, "MEMBER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"email":null}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+
+        mockMvc.perform(put("/api/membership/members/{id}", memberId)
+                        .with(roleJwt("admin-sub", "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"firstName":null}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
 
         mockMvc.perform(put("/api/membership/members/{id}", otherMemberId)
                         .with(roleJwt(memberSubject, "MEMBER"))
