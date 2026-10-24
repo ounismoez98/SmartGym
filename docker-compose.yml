@@ -68,6 +68,10 @@ services:
       APP_SECURITY_ISSUER_URI: http://localhost:8080/realms/smart-gym
       APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/smart-gym/protocol/openid-connect/certs
       APP_PROVISIONING_TOKEN: ${PROVISIONING_TOKEN:?Set PROVISIONING_TOKEN in .env}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      APP_LLM_CONNECT_TIMEOUT: ${APP_LLM_CONNECT_TIMEOUT:-5s}
+      APP_LLM_READ_TIMEOUT: ${APP_LLM_READ_TIMEOUT:-120s}
     ports:
       - "8081:8081"
     depends_on:

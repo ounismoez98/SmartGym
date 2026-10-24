@@ -1,8 +1,9 @@
 # Smart Gym
 
-Smart Gym is a gym-management platform. This repository currently delivers the
-first runnable security vertical slice: Angular sign-in through Keycloak,
-an authenticated dashboard, and the Spring Boot membership identity API.
+Smart Gym is a gym-management platform using Angular, Spring Boot, PostgreSQL,
+and Keycloak. The repository includes the authenticated membership vertical
+slice and a member-scoped Nutrition & Body Tracking module (M4). Courses and
+training API prefixes are protected but their module services are not included.
 
 ## Development ownership
 
@@ -16,8 +17,8 @@ an authenticated dashboard, and the Spring Boot membership identity API.
 
 These are project ownership assignments, not application roles. Application
 roles are `ADMIN`, `COACH`, and `MEMBER`; users may have overlapping roles.
-The seeded gym accounts below are development identities and are not mapped
-to any developer.
+The development accounts provisioned by the script below are local test
+identities and are not mapped to any developer.
 
 ## Development-only URLs and startup
 
@@ -43,8 +44,10 @@ should use the Nginx `/api/...` URLs.
    docker compose up --build -d
    ```
 
-3. Wait for Keycloak and the API to become healthy, then provision the four
-   development accounts and their business profiles:
+3. Wait for the PostgreSQL and Keycloak health checks to pass, then confirm
+   the API started with `docker compose ps` and `docker compose logs api`.
+   The API and frontend do not define Compose health checks. Provision the
+   four development accounts and their business profiles:
 
    ```powershell
    $env:KEYCLOAK_ADMIN_USERNAME = "admin"
@@ -66,6 +69,41 @@ should use the Nginx `/api/...` URLs.
    infrastructure-only; it is not an application administrator.
 4. Open `http://localhost:8088` and select **Sign in**.
 
+## Database schema and migrations
+
+The API uses Flyway migrations under
+`backend/src/main/resources/db/migration`. `V1__baseline.sql` creates the
+current PostgreSQL schema for both membership and nutrition entities. New
+installations using a fresh, empty database apply this migration on first API
+startup; Hibernate validates the mapped schema and does not modify it. If the
+Compose PostgreSQL volume already contains a database, review the existing
+database procedure below before starting the API.
+
+For an existing database, first take a database backup and compare its schema
+with `V1__baseline.sql`. Do not baseline a database with unrelated or
+unreviewed schema drift. First inspect whether `flyway_schema_history` already
+exists; do not baseline a database that already has migration history. Only
+after confirming the existing schema represents V1 and there is no migration
+history, stop the API and start it once with Flyway's baseline options:
+
+```powershell
+docker compose stop api
+docker compose run --rm api `
+  --spring.flyway.baseline-on-migrate=true `
+  --spring.flyway.baseline-version=1
+```
+
+Wait for the API to report that it started successfully, then stop the
+one-off container with `Ctrl+C` and start the normal service:
+
+```powershell
+docker compose up -d api
+```
+
+The one-time baseline marks the existing schema at version 1 without replaying
+the baseline DDL or changing its data. Future versioned migrations then run
+normally. Never drop the PostgreSQL volume to resolve a migration error.
+
 Keycloak credential validation and invalid-credential messages stay on the
 Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
 is not configured; password-recovery email is intentionally disabled and is
@@ -73,9 +111,227 @@ not operational.
 
 The Compose stack routes `/api/membership`, `/api/courses`, `/api/training`,
 and `/api/nutrition` to the secured business API while preserving the full
-prefix. The latter three route prefixes are security-protected, ready for
-their module services, and do not claim to implement those business features
-yet.
+prefix. Nutrition endpoints provide member-scoped foods, meal plans, food
+journal entries, body measurements, profiles, nutritional calculations, and
+an optional local AI meal-plan assistant. Courses and training remain
+security-protected and await their module services.
+
+## Nutrition & Body Tracking (Module 4)
+
+### Starting and using Nutrition
+
+Prerequisites are Docker Desktop with Docker Compose v2 and access to the
+container image registries used by the Compose file. No host-installed Java,
+Maven, Node.js, or npm is required for the container-based commands below.
+
+1. Copy `.env.example` to `.env`. Replace the placeholder values for
+   `KEYCLOAK_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, and `PROVISIONING_TOKEN`
+   with unique development-only secrets. Keep `.env` private and never commit
+   it. `KEYCLOAK_ADMIN_USERNAME` defaults to `admin`.
+2. Start the services:
+
+   ```powershell
+   docker compose up --build -d
+   docker compose ps
+   ```
+
+   Compose starts `postgres`, `keycloak-db`, `keycloak`, `api`, and
+   `frontend`; database health checks gate dependent services. `api` and
+   `frontend` are built from the repository Dockerfiles.
+3. Provision development accounts if this is a new local environment. In
+   PowerShell, set `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`,
+   `PROVISIONING_TOKEN`, and unique values for `DEV_ADMIN_PASSWORD`,
+   `DEV_COACH_PASSWORD`, `DEV_MEMBER_A_PASSWORD`, and
+   `DEV_MEMBER_B_PASSWORD` in the current shell, then run:
+
+   ```powershell
+   .\scripts\provision-dev.ps1
+   ```
+
+   The script provisions `gym-admin`, `gym-coach`, `member-a`, and `member-b`.
+   Supply passwords through environment variables; do not put them in source
+   files or command history.
+4. Open `http://localhost:8088`, sign in with an account assigned the
+   `MEMBER` or `ADMIN` role, and select **Nutrition** from the dashboard.
+   Enter profile details, add foods, then log journal entries or measurements.
+   The Nutrition page includes daily totals, profile-based BMI and saved-target
+   macro estimates, food and meal-plan CRUD, journal CRUD, and measurement
+   history. The AI assistant is optional; see its configuration below.
+
+The `.env` values directly required by Compose are the Keycloak bootstrap
+username/password, PostgreSQL password, and provisioning token. Compose sets
+the API datasource URL/username and Keycloak issuer/JWKS URLs in the API
+service configuration. Groq is optional: set `GROQ_API_KEY` in the private
+`.env` file and choose `GROQ_MODEL`. The README example uses
+`openai/gpt-oss-20b`, which Groq's Structured Outputs documentation currently
+uses as a supported-model example. Model availability can change and can
+depend on account access; check the current [Groq model catalog](https://console.groq.com/docs/models)
+and your account's available models before relying on it. The Groq catalog
+also documents the authenticated Models API for listing active IDs; this
+application does not call it. Do not put a real
+API key in source control, build arguments, Angular code, or logs.
+`APP_LLM_CONNECT_TIMEOUT` and `APP_LLM_READ_TIMEOUT` control backend HTTP
+timeouts and default to `5s` and `120s`.
+
+### Groq meal-plan integration
+
+The backend sends requests only to Groq's official
+`https://api.groq.com/openai/v1/chat/completions` endpoint. Compose passes
+`GROQ_API_KEY` and `GROQ_MODEL` to the API container; neither is provided to
+the frontend. The API key is sent in the backend-only `Authorization: Bearer`
+header and is not included in the request body or logged by the adapter.
+
+The request uses the configured model, `system` and `user` chat messages, and
+`response_format` with `type: json_schema`, `strict: true`, and a meal-plan
+schema. See Groq's [Structured Outputs documentation](https://console.groq.com/docs/structured-outputs).
+Groq's response is read from `choices[0].message.content`, which must contain
+the plan JSON. The application then performs its own DTO, numeric, meal-type,
+serving, size, and restriction checks. Strict JSON mode does not replace
+application validation.
+
+Only the saved goal, saved calorie target, dietary preference, explicit
+request restrictions, and member-owned food names/nutrition are sent as
+generation context. JWTs, member subjects, profile age, height, and weight
+are not sent. Do not add sensitive personal data to the prompt.
+
+If `GROQ_API_KEY` is empty, generation returns `UNAVAILABLE` without a
+network call. The model default is `openai/gpt-oss-20b`; override it with a
+model currently available to your account using `GROQ_MODEL`. Authentication
+errors, rate limits, timeouts, network failures, and malformed responses
+produce non-secret unavailable messages. The call continues to run on the
+existing bounded asynchronous executor. No live Groq request has been made
+as part of this implementation; generation against an active account/model
+remains unverified.
+
+Groq-hosted model output is untrusted. Explicit restrictions are checked
+before the suggestion is returned and are checked again when the member
+saves a reviewed plan. This does not establish allergy safety or medical
+suitability. Nutrition is recalculated from saved food data when a meal's
+foods all match; otherwise the values remain model estimates.
+Inference runs outside servlet request threads on a bounded pool (up to four
+active calls and eight queued requests). The existing plan-generation route
+keeps its response shape; saturated requests return an explicit unavailable
+response instead of adding unbounded work.
+Review and edit every meal before saving. The current schema stores each meal
+as a separate member-owned meal-plan row and can preserve preparation
+instructions in its description. Shopping lists and alternatives are shown
+for review but are not persisted.
+
+### Nutrition API
+
+All routes below are under `/api/nutrition`. They require a valid Keycloak JWT
+and the `ADMIN` or `MEMBER` application role. The server derives the data
+owner from the JWT subject; there is no client-supplied owner ID. Lists and
+record operations are scoped to that subject, including for admins.
+Validation failures generally return `400`; missing or non-owned records
+return `404`. Food deletion returns `409` while any journal entry or meal-plan
+item references that food.
+
+| Method and path | Behavior and principal validation |
+| --- | --- |
+| `POST /foods` | Create a food. Requires a nonblank name, positive serving size in grams, and finite nonnegative calories, protein, carbohydrates, fat, fiber, and sodium. Name/brand max 150 characters. |
+| `GET /foods` | List the authenticated subject's foods. |
+| `PUT /foods/{foodId}` | Replace a food's editable values, with the create validation rules; only its owner can update it. |
+| `DELETE /foods/{foodId}` | Delete an owned food only when it is not referenced by a journal entry or meal plan. |
+| `POST /meal-plans` | Create one meal record. Requires a name, supported meal type, nonnegative target calories, and at least one food with positive servings. Every food must belong to the caller. |
+| `GET /meal-plans` | List the authenticated subject's meal plans. |
+| `PUT /meal-plans/{mealPlanId}` | Update an owned meal plan, with create validation and food-ownership checks. |
+| `DELETE /meal-plans/{mealPlanId}` | Delete an owned meal plan. |
+| `POST /food-journal` | Create a journal entry with an owned food, meal type, ISO date, and positive servings. Notes max 300 characters. |
+| `GET /food-journal` | List the authenticated subject's journal entries. |
+| `PUT /food-journal/{entryId}` | Update an owned entry, with create validation and food-ownership checks. |
+| `DELETE /food-journal/{entryId}` | Delete an owned journal entry. |
+| `POST /body-measurements` | Create a dated measurement. Weight (kg), waist, hip, chest, arm, and thigh (cm) are required and positive; notes max 300 characters. |
+| `GET /body-measurements` | List the authenticated subject's measurement history. |
+| `PUT /body-measurements/{measurementId}` | Update an owned measurement, with create validation. |
+| `DELETE /body-measurements/{measurementId}` | Delete an explicitly selected owned measurement record. |
+| `POST /profiles` | Create or update the caller's latest profile. Profile name, goal, dietary preference, and activity level are required; optional age, height (cm), weight (kg), and target calories must be positive when provided. Text values have field-specific maximum lengths. |
+| `GET /profiles` | Read the caller's latest profile; returns `404` when none exists. |
+| `GET /calculations?foodIds={id}&servings={n}` | Sum calories, macros, fiber, and sodium for the supplied owned food IDs. Repeat `foodIds` and `servings` parameters for multiple foods. Servings are optional (default one per food); when supplied, there must be exactly one positive finite quantity per ID. |
+| `GET /calculations/bmi` | Calculate BMI from profile kilograms and centimetres converted to metres. Requires a profile (`404` if absent); returns `422` if required height or weight is missing/invalid. The response labels BMI as an estimate, not body-fat percentage. |
+| `GET /calculations/macros` | Estimate protein (1.6 g/kg), fat (25% of the saved calorie target), and carbohydrates from remaining calories. Requires a profile (`404` if absent) with positive saved weight and target calories; returns `422` if inputs are missing or the target cannot support nonnegative carbohydrates. This uses the manually saved target, not TDEE. |
+| `GET /calculations/energy` | With a profile present, return an unavailable energy estimate and explanation. Returns `404` if there is no profile. Current profile fields do not provide the required Mifflin–St Jeor input; BMR/TDEE are not calculated. |
+| `GET /food-journal/daily?date=YYYY-MM-DD` | Return the caller's daily totals and meal-level calories, macros, fiber, and sodium for the required date, scaled by logged servings. |
+| `POST /assistant/plan` | Request an AI suggestion. The UI sends `{"restrictions":["..."]}`; profile, target, and saved-food context come from the authenticated caller's records. Returns `UNAVAILABLE` when not configured, unreachable, malformed, or rejected; executor saturation/failure returns `503`. |
+| `POST /assistant/plan/save` | Save a reviewed plan using `planName`, `goal`, `restrictions`, and 1–12 meals; each meal requires a supported type, name, preparation instructions, and one or more owned saved-food IDs with positive servings. Restrictions and ownership are rechecked before persistence. |
+
+All meal-type values are `BREAKFAST`, `LUNCH`, `DINNER`, `SNACK`,
+`PRE_WORKOUT`, or `POST_WORKOUT`. Profile goals and dietary preference are
+stored as text; the UI offers weight loss, maintenance, muscle gain and
+balanced/vegetarian/vegan/pescatarian/other choices. No dedicated
+preferences/allergy table exists.
+
+### Build and verification commands
+
+Run these from the repository root in PowerShell:
+
+```powershell
+# Validate Compose interpolation and service configuration.
+docker compose config --quiet
+
+# Run all backend tests and package with Java 21 / Maven in the project toolchain.
+$backend = (Resolve-Path .\backend).Path
+docker run --rm --mount "type=bind,source=$backend,target=/workspace" `
+  -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test package
+
+# Build the frontend production image (its Dockerfile runs npm ci and npm run build).
+docker compose build frontend
+
+# Build the API and frontend images without restarting running services.
+docker compose build api frontend
+
+# Inspect service state and follow logs.
+docker compose ps
+docker compose logs -f api frontend
+```
+
+Latest backend test run (2026-10-24): the Java 21 Maven Docker command
+`docker run --rm --mount "type=bind,source=$backend,target=/workspace" -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test`
+completed 39 tests with 0 failures, 0 errors, and 0 skipped. The test profile
+uses H2; this result does not verify live PostgreSQL persistence, Keycloak
+token validation, or Groq inference.
+
+`frontend/package.json` currently has no test script and the frontend test
+suite is not configured. For local host builds, the backend requires Java 21
+and Maven; the frontend requires the Node/npm versions in its Dockerfile.
+
+### Module status and limitations
+
+- The Nutrition page has profile editing, food CRUD/search, meal-plan
+  CRUD, journal CRUD/daily totals, measurement entry/history and a saved-data
+  weight chart. The body illustrations are presentation-only and do not infer
+  body composition.
+- The persisted profile supports age, height, weight, target calories, goal,
+  activity level, and one dietary-preference text value. Target weight and
+  training frequency are session-only in the UI; allergies/restrictions are
+  supplied per AI request and are not persisted. Budget, cuisine, meals per
+  day, disliked foods, and preparation preferences are not supported by the
+  current API and are not collected.
+- BMI is available from valid saved height/weight. Saved-target macro
+  estimates are available from valid saved weight/calories. BMR/TDEE and
+  TDEE-derived calorie targets are unavailable because the profile has no
+  sex-related input to select the Mifflin–St Jeor variant. Required age,
+  height, and weight must also be present before that equation could be
+  evaluated.
+- Journal entries store a food reference and serving quantity, not a nutrient
+  snapshot. Since daily totals use the food's current nutrient values, editing
+  a food can change recalculated totals for earlier journal dates.
+- A generated multi-meal suggestion is saved as separate member-owned meal
+  records. Preparation text is stored in each record description; the
+  shopping list and alternatives are not persisted.
+- No Groq API key has been configured or verified for inference. Live
+  Keycloak-backed Nutrition browser/API integration and
+  end-to-end persistence against PostgreSQL have not been verified as part of
+  the Step 8 overall verification. The separate login smoke-check notes below
+  do not verify these Module 4 workflows. Automated backend tests use the
+  configured test database and do not establish those live integration
+  results.
+- Step 8 verification ran the full backend suite: 37 tests, 0 failures,
+  0 errors, and 0 skipped; backend packaging, the Angular production build,
+  Compose validation, and API/frontend image builds passed. Step 9's
+  `git diff --check` passed after removing the reported trailing blank line.
+  These are prior verification results; documentation-only changes do not
+  rerun those checks.
 
 The Keycloak client allowlist contains only the Angular root and the exact
 SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`, `/nutrition`,
@@ -163,6 +419,6 @@ development-only accounts.
 - [x] Logout ends the Keycloak application session and returns to `/`.
 - [x] Protected content cannot be accessed after logout.
 
-The business CRUD features for M1-M4, SMTP password recovery, production
-HTTPS, and a full browser simulation of token expiry have not been
-implemented or tested in this first authentication delivery.
+SMTP password recovery and production HTTPS are not configured. The current
+login smoke-check notes above do not establish live Module 4 browser,
+database-persistence, or Groq integration.
