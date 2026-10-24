@@ -285,11 +285,24 @@ docker compose ps
 docker compose logs -f api frontend
 ```
 
-Latest backend test run (2026-10-24): the Java 21 Maven Docker command
-`docker run --rm --mount "type=bind,source=$backend,target=/workspace" -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test`
-completed 39 tests with 0 failures, 0 errors, and 0 skipped. The test profile
-uses H2; this result does not verify live PostgreSQL persistence, Keycloak
-token validation, or Groq inference.
+To generate backend line/branch coverage, run `mvn -B test jacoco:report`
+from `backend`. The HTML report is written to `target/site/jacoco/index.html`;
+machine-readable XML and CSV reports are written alongside it. For Docker
+Maven execution from the repository root:
+
+```powershell
+$backend = (Resolve-Path .\backend).Path
+docker run --rm --mount "type=bind,source=$backend,target=/workspace" `
+  -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test jacoco:report
+```
+
+Latest backend test and coverage run (2026-10-24): `mvn -B test jacoco:report`
+completed 48 tests with 0 failures, 0 errors, and 0 skipped. JaCoCo measured
+89.02% line coverage (900/1,011) and 58.85% branch coverage (369/627) across
+application classes. Before the additional white-box tests, the baseline was
+86.84% line (878/1,011) and 57.42% branch (360/627). The test profile uses
+H2; these results do not verify live PostgreSQL persistence, Keycloak token
+validation, or Groq inference.
 
 `frontend/package.json` currently has no test script and the frontend test
 suite is not configured. For local host builds, the backend requires Java 21

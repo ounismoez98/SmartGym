@@ -97,6 +97,38 @@ class NutritionControllerTest {
     }
 
     @Test
+    void nutritionRoutesRejectMissingAuthenticationAndUnsupportedRoles() throws Exception {
+        mockMvc.perform(get("/api/nutrition/foods"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(get("/api/nutrition/profiles")
+                        .with(jwt().jwt(token -> token.subject("coach-123"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_COACH"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void malformedAndUnknownFoodIdentifiersReturnClientErrorsWithoutDataLeakage() throws Exception {
+        long foodId = createFood("member-123", "Private food", 200, 20);
+
+        mockMvc.perform(put("/api/nutrition/foods/{foodId}", "not-a-number")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(foodPayload("Changed food", 300, 30)))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(delete("/api/nutrition/foods/{foodId}", Long.MAX_VALUE)
+                        .with(member("member-123")))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(get("/api/nutrition/foods").with(member("member-456")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "Private food", foodRepository.findById(foodId).orElseThrow().getName());
+    }
+
+    @Test
     void foodValidationRejectsMissingNamesNonpositiveServingAndNegativeNutrition() throws Exception {
         mockMvc.perform(post("/api/nutrition/foods").with(member("member-123"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -157,9 +189,15 @@ class NutritionControllerTest {
                                 """.formatted(oatsId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.mealType").value("BREAKFAST"));
+        mockMvc.perform(get("/api/nutrition/meal-plans").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Breakfast"));
+        mockMvc.perform(get("/api/nutrition/meal-plans").with(member("member-456")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
 
         mockMvc.perform(post("/api/nutrition/food-journal")
-                        .with(member("member-123"))
+                                .with(member("member-123"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -172,6 +210,12 @@ class NutritionControllerTest {
                                 """.formatted(oatsId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.notes").value("Good start"));
+        mockMvc.perform(get("/api/nutrition/food-journal").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].notes").value("Good start"));
+        mockMvc.perform(get("/api/nutrition/food-journal").with(member("member-456")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
 
         mockMvc.perform(get("/api/nutrition/calculations?foodIds=" + oatsId)
                         .with(member("member-123")))
@@ -472,6 +516,52 @@ class NutritionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].notes").value("Stable week"));
     }
+
+    @Test
+    void nutritionProfileCanBeRetrievedAndUpdatedForTheAuthenticatedMember() throws Exception {
+        mockMvc.perform(post("/api/nutrition/profiles")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileName": "First profile",
+                                  "goal": "maintenance",
+                                  "dietaryPreference": "balanced",
+                                  "activityLevel": "light",
+                                  "weightKg": 70,
+                                  "targetCalories": 2000
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/nutrition/profiles").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileName").value("First profile"));
+
+        mockMvc.perform(post("/api/nutrition/profiles")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileName": "Updated profile",
+                                  "goal": "muscle gain",
+                                  "dietaryPreference": "vegetarian",
+                                  "activityLevel": "moderate",
+                                  "weightKg": 72,
+                                  "targetCalories": 2400
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileName").value("Updated profile"));
+
+        mockMvc.perform(get("/api/nutrition/profiles").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileName").value("Updated profile"))
+                .andExpect(jsonPath("$.targetCalories").value(2400));
+        mockMvc.perform(get("/api/nutrition/profiles").with(member("member-456")))
+                .andExpect(status().isNotFound());
+    }
+
 
     @Test
     void assistantReturnsPlanEvenWithoutRuntime() throws Exception {
@@ -834,6 +924,20 @@ class NutritionControllerTest {
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(
                         "/api/nutrition/foods/{foodId}", foodId)
+                        .with(member("member-123")))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void foodsReferencedOnlyByMealPlansCannotBeDeleted() throws Exception {
+        long foodId = createFood("member-123", "Planned food", 200, 20);
+        mockMvc.perform(post("/api/nutrition/meal-plans")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mealPlanPayload("Planned meal", foodId, 1)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/nutrition/foods/{foodId}", foodId)
                         .with(member("member-123")))
                 .andExpect(status().isConflict());
     }

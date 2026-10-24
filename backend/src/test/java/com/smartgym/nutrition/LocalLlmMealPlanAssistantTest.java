@@ -62,6 +62,22 @@ class LocalLlmMealPlanAssistantTest {
     }
 
     @Test
+    void missingModelIsUnavailableWithoutCallingGroq() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        LocalLlmMealPlanAssistant assistant =
+                new LocalLlmMealPlanAssistant(restTemplate, new ObjectMapper(), TEST_API_KEY, "");
+
+        NutritionService.MealPlanSuggestion result = assistant.generate(request(List.of()), profile(), List.of());
+
+        assertFalse(result.available());
+        assertEquals("UNAVAILABLE", result.status());
+        assertNull(result.plan());
+        assertTrue(result.note().contains("GROQ_MODEL"));
+        server.verify();
+    }
+
+    @Test
     void groqChatRequestUsesBearerAuthStructuredJsonAndParsesChoicesContent() throws Exception {
         RestTemplate restTemplate = new RestTemplate();
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
@@ -124,6 +140,23 @@ class LocalLlmMealPlanAssistantTest {
 
         assertFalse(result.available());
         assertTrue(result.note().contains("no structured meal-plan content"));
+        server.verify();
+    }
+
+    @Test
+    void malformedGroqEnvelopeIsRejectedWithoutExposingResponseDetails() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(GROQ_URL))
+                .andRespond(withSuccess("{malformed", MediaType.APPLICATION_JSON));
+        LocalLlmMealPlanAssistant assistant = assistant(restTemplate);
+
+        NutritionService.MealPlanSuggestion result = assistant.generate(request(List.of()), profile(), List.of());
+
+        assertFalse(result.available());
+        assertNull(result.plan());
+        assertTrue(result.note().contains("invalid HTTP response"));
+        assertFalse(result.note().contains("malformed"));
         server.verify();
     }
 
@@ -200,6 +233,31 @@ class LocalLlmMealPlanAssistantTest {
     }
 
     @Test
+    void forbiddenAndServerErrorsReturnSafeUnavailableMessages() {
+        assertHttpErrorIsUnavailable(HttpStatus.FORBIDDEN, "account permissions");
+        assertHttpErrorIsUnavailable(HttpStatus.INTERNAL_SERVER_ERROR, "HTTP error");
+    }
+
+    @Test
+    void groqTimeoutReturnsSafeUnavailableMessage() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(GROQ_URL))
+                .andRespond(request -> {
+                    throw new org.springframework.web.client.ResourceAccessException("Read timed out");
+                });
+        LocalLlmMealPlanAssistant assistant = assistant(restTemplate);
+
+        NutritionService.MealPlanSuggestion result = assistant.generate(request(List.of()), profile(), List.of());
+
+        assertFalse(result.available());
+        assertNull(result.plan());
+        assertTrue(result.note().contains("timed out"));
+        assertFalse(result.note().contains(TEST_API_KEY));
+        server.verify();
+    }
+
+    @Test
     void unreachableGroqServiceReturnsUnavailable() {
         RestTemplate restTemplate = new RestTemplate();
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
@@ -219,6 +277,25 @@ class LocalLlmMealPlanAssistantTest {
     private LocalLlmMealPlanAssistant assistant(RestTemplate restTemplate) {
         return new LocalLlmMealPlanAssistant(
                 restTemplate, new ObjectMapper(), TEST_API_KEY, GROQ_MODEL);
+    }
+
+    private void assertHttpErrorIsUnavailable(HttpStatus status, String expectedMessage) {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(requestTo(GROQ_URL))
+                .andRespond(withStatus(status)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"message\":\"private provider response\"}}"));
+        LocalLlmMealPlanAssistant assistant = assistant(restTemplate);
+
+        NutritionService.MealPlanSuggestion result = assistant.generate(request(List.of()), profile(), List.of());
+
+        assertFalse(result.available());
+        assertNull(result.plan());
+        assertTrue(result.note().contains(expectedMessage));
+        assertFalse(result.note().contains(TEST_API_KEY));
+        assertFalse(result.note().contains("private provider response"));
+        server.verify();
     }
 
     private String groqResponse(String content) throws Exception {
