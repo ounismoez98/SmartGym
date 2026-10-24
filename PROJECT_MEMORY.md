@@ -87,7 +87,7 @@
 - JWT/security/API: `backend/src/main/java/com/smartgym/membership/`
 - API access-control tests:
   `backend/src/test/java/com/smartgym/membership/api/MembershipControllerTest.java`
-- Realm/client/claims: `keycloak/realm-import/smart-gym-realm.json`
+- Realm/client/claims: `keycloak/realm-import/gym-realm.json`
 
 ## Next work — recommended order
 
