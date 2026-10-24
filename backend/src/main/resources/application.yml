@@ -21,3 +21,8 @@ app:
     audience: smart-gym-api
   provisioning:
     token: ${APP_PROVISIONING_TOKEN:}
+  llm:
+    base-url: ${LLM_BASE_URL:https://api.groq.com/openai/v1}
+    model: ${LLM_MODEL:llama-3.3-70b-versatile}
+    api-key: ${LLM_API_KEY:}
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:30}

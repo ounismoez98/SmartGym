@@ -30,10 +30,11 @@ The local HTTP configuration is for development only:
 | Realm | `gym` |
 | Business API | `http://localhost:8088/api/...` (proxied by Nginx) |
 | RabbitMQ management | `http://localhost:15672` |
-| Ollama API | `http://localhost:11434/api/chat` |
+| Groq chat completions API | `https://api.groq.com/openai/v1/chat/completions` |
 
 Compose services are `postgres`, `keycloak-db`, `keycloak`, `rabbitmq`,
-`ollama`, `api`, and `frontend`. The Spring API and PostgreSQL are also
+`api`, and `frontend`. The optional `ollama` service is available with the
+`local-llm` Compose profile. The Spring API and PostgreSQL are also
 exposed on host ports `8081` and `5433` for local development and
 provisioning. RabbitMQ exposes AMQP on port `5672` and its management
 interface on `15672`. `keycloak-db` is internal to the Compose network and
@@ -64,7 +65,10 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | `PROVISIONING_TOKEN` | Token for the development-only profile provisioning API | Yes |
    | `RABBITMQ_USER` | RabbitMQ username | Yes |
    | `RABBITMQ_PASSWORD` | RabbitMQ password | Yes |
-   | `OLLAMA_MODEL` | Ollama model to use; defaults to `qwen2.5:3b` | No |
+   | `LLM_BASE_URL` | OpenAI-compatible API base URL; defaults to Groq | No |
+   | `LLM_MODEL` | Groq model ID; defaults to `llama-3.3-70b-versatile` | No |
+   | `LLM_API_KEY` | Groq API key; replace the placeholder with a locally stored key | Yes |
+   | `LLM_TIMEOUT_SECONDS` | LLM request timeout in seconds; defaults to `30` | No |
 
    Generate a local provisioning token with:
 
@@ -139,16 +143,34 @@ supplied only through environment variables and are not stored in source
 control. The Keycloak administrator account is infrastructure-only; it is
 not an application administrator.
 
-### Pull the Ollama model and sign in
+### Configure Groq and sign in
 
-After loading `.env` into the PowerShell session, pull the selected model once.
-`OLLAMA_MODEL` defaults to `qwen2.5:3b`:
+Create a Groq API key in the [Groq Console](https://console.groq.com/keys) and
+put it in `LLM_API_KEY` in your local `.env`. Keep it private; it is provided
+only to the API container and is never part of the frontend configuration.
+The example uses the documented Groq endpoint and model ID:
 
-```powershell
-docker compose exec ollama ollama pull $env:OLLAMA_MODEL
+```dotenv
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_MODEL=llama-3.3-70b-versatile
+LLM_API_KEY=replace-with-your-groq-api-key
+LLM_TIMEOUT_SECONDS=30
 ```
 
-The Ollama service is deployed locally, but the API does not call Ollama yet.
+The optional Ollama container remains available under the `local-llm` Compose
+profile and does not start by default:
+
+```powershell
+docker compose --profile local-llm up --build -d
+```
+
+The API currently does not call either Groq or Ollama; the LLM client and
+assistant are planned for a later implementation step.
+
+Data sent to the LLM provider is limited to minimal, non-identifying facts.
+The PFE specification asks for a local LLM; confirm this choice with the
+supervisor.
+
 Open `http://localhost:8088` and select **Sign in**.
 
 Keycloak credential validation and invalid-credential messages stay on the
@@ -274,8 +296,8 @@ The following are not yet delivered:
 
 - Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
   only.
-- The administrative LLM assistant. Ollama is deployed, but the API does not
-  call it.
+- The administrative LLM assistant. Groq configuration is prepared, but the
+  API does not call an LLM yet.
 - SMTP password recovery and production HTTPS.
 
 Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
@@ -307,7 +329,7 @@ Docker Desktop must be running for the Testcontainers PostgreSQL tests.
   ```
 
   `docker compose down -v` deletes local data, including database contents
-  and downloaded Ollama models.
+  and data in the optional Ollama volume.
 - The provisioning script exits immediately: one or more required variables
   are absent from the current PowerShell session. Load `.env` as described
   above and set `PROVISIONING_TOKEN`, `DEV_ADMIN_PASSWORD`,
