@@ -11,8 +11,8 @@ const knownRoutes = new Set([
 export class AuthService {
   private readonly keycloak = new Keycloak({
     url: 'http://localhost:8080',
-    realm: 'smart-gym',
-    clientId: 'smart-gym-frontend'
+    realm: 'gym',
+    clientId: 'gym-frontend'
   });
   private refreshAttempted = false;
   private refreshInFlight: Promise<boolean> | null = null;

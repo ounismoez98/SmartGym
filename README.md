@@ -27,8 +27,10 @@ The local HTTP configuration is for development only:
 | --- | --- |
 | Angular/Nginx | `http://localhost:8088` |
 | Keycloak | `http://localhost:8080` |
-| Realm | `smart-gym` |
+| Realm | `gym` |
 | Business API | `http://localhost:8088/api/...` (proxied by Nginx) |
+| RabbitMQ management | `http://localhost:15672` |
+| Ollama API | `http://localhost:11434/api/chat` |
 
 The Spring API and its PostgreSQL database are also exposed on host ports
 `8081` and `5433` for local development and provisioning. Browser API calls
@@ -43,8 +45,11 @@ should use the Nginx `/api/...` URLs.
    docker compose up --build -d
    ```
 
-3. Wait for Keycloak and the API to become healthy, then provision the four
-   development accounts and their business profiles:
+3. The imported `gym` realm defines the `ADMIN`, `COACH`, and `MEMBER` roles
+   and three passwordless development identities (`gym-admin`, `gym-coach`,
+   and `member-a`). No user password is stored in the realm export. Wait for
+   Keycloak and the API to become healthy, then provision the accounts with
+   local-only passwords:
 
    ```powershell
    $env:KEYCLOAK_ADMIN_USERNAME = "admin"
@@ -57,14 +62,22 @@ should use the Nginx `/api/...` URLs.
    ```
 
    Account usernames are `gym-admin`, `gym-coach`, `member-a`, and
-   `member-b`. The script creates or updates these Keycloak users, applies
+   `member-b`; `member-b` is added by the script for ownership-isolation
+   tests. The script creates or updates these Keycloak users, applies
    their application roles, and idempotently provisions their business
    profiles and coach assignments through the Keycloak Admin API and
    development provisioning endpoint. It prints the usernames, never their
    passwords. Passwords are supplied only through environment variables and
    are not stored in source control. The Keycloak administrator account is
    infrastructure-only; it is not an application administrator.
-4. Open `http://localhost:8088` and select **Sign in**.
+4. Pull the configured local language model once (replace the model tag if
+   `OLLAMA_MODEL` was changed in `.env`):
+
+   ```powershell
+   docker compose exec ollama ollama pull qwen2.5:3b
+   ```
+
+5. Open `http://localhost:8088` and select **Sign in**.
 
 Keycloak credential validation and invalid-credential messages stay on the
 Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
@@ -77,7 +90,8 @@ prefix. The latter three route prefixes are security-protected, ready for
 their module services, and do not claim to implement those business features
 yet.
 
-The Keycloak client allowlist contains only the Angular root and the exact
+The public `gym-frontend` Keycloak client uses Authorization Code + PKCE S256.
+Its allowlist contains only the Angular root and the exact
 SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`, `/nutrition`,
 `/forbidden`, `/not-found`) plus `/silent-check-sso.html`; the post-logout
 redirect is exactly `http://localhost:8088/`, and the allowed web origin is
@@ -97,7 +111,7 @@ exactly `http://localhost:8088`.
   session, while `403` opens the forbidden page.
 - Spring validates the JWT signature using the Docker-internal Keycloak JWKS
   URL and independently validates the browser-visible issuer
-  `http://localhost:8080/realms/smart-gym` and the required
+  `http://localhost:8080/realms/gym` and the required
   `smart-gym-api` audience. Networking does not disable issuer or audience
   validation.
 - `GET /api/membership/me` derives its subject, display name, and application

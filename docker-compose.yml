@@ -57,6 +57,35 @@ services:
       retries: 30
       start_period: 30s
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ollama:
+    image: ollama/ollama:0.12.6
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   api:
     build:
       context: ./backend
@@ -65,15 +94,25 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/smartgym
       SPRING_DATASOURCE_USERNAME: smartgym
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set local secrets}
-      APP_SECURITY_ISSUER_URI: http://localhost:8080/realms/smart-gym
-      APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/smart-gym/protocol/openid-connect/certs
+      APP_SECURITY_ISSUER_URI: http://localhost:8080/realms/gym
+      APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/gym/protocol/openid-connect/certs
       APP_PROVISIONING_TOKEN: ${PROVISIONING_TOKEN:?Set PROVISIONING_TOKEN in .env}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     ports:
       - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
       keycloak:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
 
   frontend:
@@ -87,3 +126,5 @@ services:
 volumes:
   smartgym-db:
   keycloak-db:
+  rabbitmq-data:
+  ollama-data:
