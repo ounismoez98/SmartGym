@@ -24,9 +24,21 @@ export const appRoutes: Routes = [
   },
   {
     path: 'training',
-    component: ModuleComponent,
+    loadComponent: () => import('./training/training.component').then((module) => module.TrainingComponent),
     canActivate: [authGuard, roleGuard],
     data: { title: 'Training', module: 'M3', description: 'Training plans and coaching workspace.', roles: moduleRoles }
+  },
+  {
+    path: 'training/programmes',
+    loadComponent: () => import('./training/programmes.component').then((module) => module.ProgrammesComponent),
+    canActivate: [authGuard, roleGuard],
+    data: { roles: ['COACH', 'MEMBER'] }
+  },
+  {
+    path: 'training/workouts',
+    loadComponent: () => import('./training/workouts.component').then((module) => module.WorkoutsComponent),
+    canActivate: [authGuard, roleGuard],
+    data: { roles: ['MEMBER'] }
   },
   {
     path: 'nutrition',

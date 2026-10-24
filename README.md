@@ -71,17 +71,19 @@ Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
 is not configured; password-recovery email is intentionally disabled and is
 not operational.
 
-The Compose stack routes `/api/membership`, `/api/courses`, `/api/training`,
-and `/api/nutrition` to the secured business API while preserving the full
-prefix. The latter three route prefixes are security-protected, ready for
-their module services, and do not claim to implement those business features
-yet.
+The Compose stack routes `/api/membership`, `/api/courses`, and
+`/api/nutrition` to the membership API. `/api/training` is routed to the
+separate training-service and retains its prefix.
 
 The Keycloak client allowlist contains only the Angular root and the exact
-SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`, `/nutrition`,
-`/forbidden`, `/not-found`) plus `/silent-check-sso.html`; the post-logout
+SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`,
+`/training/programmes`, `/training/workouts`, `/nutrition`, `/forbidden`,
+`/not-found`) plus `/silent-check-sso.html`; the post-logout
 redirect is exactly `http://localhost:8088/`, and the allowed web origin is
 exactly `http://localhost:8088`.
+For an already-imported local realm, update the
+`smart-gym-frontend` redirect URI list in Keycloak Admin Console because
+Keycloak does not overwrite an existing realm on import.
 
 ## Authentication and authorization
 
@@ -125,8 +127,9 @@ production.
 ## Routes and module ownership
 
 The SPA includes `/` (public landing), `/dashboard`, `/membership` (M1),
-`/courses` (M2), `/training` (M3), `/nutrition` (M4), `/forbidden`, and
-`/not-found`. Refreshes are handled by the Nginx SPA fallback. The dashboard
+`/courses` (M2), `/training` (M3), `/training/programmes`,
+`/training/workouts`, `/nutrition` (M4), `/forbidden`, and `/not-found`.
+Refreshes are handled by the Nginx SPA fallback. The dashboard
 shows the backend identity/profile response, role-aware module navigation,
 an account/session section, and logout. Route permissions are checked again
 on the backend for API requests.
@@ -165,4 +168,263 @@ development-only accounts.
 
 The business CRUD features for M1-M4, SMTP password recovery, production
 HTTPS, and a full browser simulation of token expiry have not been
-implemented or tested in this first authentication delivery.
+implemented or tested in the authentication delivery.
+
+## Module 3 — training-service (Phases 2–4)
+
+M3 is a separate Spring Boot 3.4.5 / Java 21 service using the existing
+`smart-gym` issuer, `smart-gym-api` audience, and Keycloak realm-role mapping.
+It owns a separate `training_db`; Hibernate uses schema validation and Flyway
+owns DDL. The service does not connect to M1's database.
+
+- `GET /api/training/exercises`: paginated active catalogue; supports `name`,
+  `muscleGroup`, `difficulty`, and `equipmentCategory` filters. Page size is
+  limited to 50.
+- `GET /api/training/exercises/{id}`: retrieve a catalogue item, including an
+  archived item for historical reference.
+- `POST /api/training/exercises`, `PATCH /api/training/exercises/{id}`, and
+  `POST /api/training/exercises/{id}/archive`: coach/admin-only management.
+  Updates accept a `version`; a stale version returns HTTP 409.
+- Exercise endpoints return DTOs. Invalid JSON/enums/fields return HTTP 400;
+  unauthenticated and insufficient-role requests return HTTP 401 and 403.
+- Exercise catalogue enum values are `CHEST`, `BACK`, `SHOULDERS`, `BICEPS`,
+  `TRICEPS`, `CORE`, `QUADRICEPS`, `HAMSTRINGS`, `GLUTES`, `CALVES`,
+  `FULL_BODY`, `OTHER`; difficulties are `BEGINNER`, `INTERMEDIATE`,
+  `ADVANCED`; equipment categories are `BODYWEIGHT`, `DUMBBELL`, `BARBELL`,
+  `KETTLEBELL`, `CABLE`, `MACHINE`, `RESISTANCE_BAND`, `OTHER`.
+- `POST /api/training/programmes`, `GET /api/training/programmes[/{id}]`,
+  and `PATCH /api/training/programmes/{id}` provide coach-authored drafts
+  with ordered sessions and typed exercise prescriptions. A prescription
+  must specify either repetitions or seconds, not both. `PATCH` replaces the
+  draft details/sessions and requires the current `version`.
+- `POST /api/training/programmes/{id}/submit`, `/reviews`, `/publish`,
+  `/archive`, and `/revisions` implement the review/publish workflow.
+  Publishing requires approval of the current revision. Published content
+  is immutable; `/revisions` creates a linked draft and leaves its source
+  published. Review history remains attached to the original programme.
+- Members can list/read their own published programmes only. Coaches can
+  manage and review programmes only for currently assigned members. An
+  `ADMIN` role alone does not grant access to private programmes or logs.
+- `POST /api/training/workout-logs`, `GET /api/training/workout-logs[/{id}]`,
+  `PATCH`, and `DELETE` support member-owned logging and coach reads for
+  assigned members. Programme/session IDs are checked against the member's
+  published programme and selected session.
+- `GET /api/training/me/progress` and coach-only
+  `GET /api/training/members/{memberId}/progress` return completed workout
+  counts by ISO week, repetition totals, maximum explicitly recorded load,
+  and loaded repetition volume (`load_kg × repetitions`). Timed sets and sets
+  without a recorded load contribute no load or volume; no bodyweight is
+  inferred.
+- Stale catalogue, programme, and workout writes return HTTP 409 using
+  optimistic locking/version checks. `/api/training/openapi` and
+  `/api/training/swagger-ui` expose the API specification/docs; business
+  operations still require a bearer token.
+- Validation failures return HTTP 400 Problem Details; missing/invalid JWTs
+  return HTTP 401; role/resource denials return HTTP 403; missing resources
+  return HTTP 404; unavailable M1 identity/assignment checks return HTTP 503.
+  Exercise and workout-history lists use zero-based `page` and bounded `size`.
+
+Example draft request (UUIDs are illustrative; response includes `id`,
+`version`, `revision: 1`, `status: "DRAFT"`, ordered sessions/items, and an
+empty review history):
+
+```json
+{
+  "memberId": "c6b12091-c34d-4d09-8e99-944b0f5cb8d0",
+  "title": "Strength basics",
+  "goal": "Build general strength",
+  "experienceLevel": "BEGINNER",
+  "durationWeeks": 4,
+  "version": null,
+  "sessions": [{
+    "title": "Workout A",
+    "notes": null,
+    "items": [{
+      "exerciseId": "10000000-0000-4000-8000-000000000002",
+      "sets": 3,
+      "repetitions": 8,
+      "durationSeconds": null,
+      "restSeconds": 60,
+      "suggestedLoadKg": null,
+      "notes": null
+    }]
+  }]
+}
+```
+
+Example standalone workout request (member identity is resolved from M1;
+clients must not send `memberId`):
+
+```json
+{
+  "programmeId": null,
+  "programmeSessionId": null,
+  "performedAt": "2026-10-22T10:00:00Z",
+  "notes": "Good session",
+  "sets": [{
+    "exerciseId": "10000000-0000-4000-8000-000000000002",
+    "repetitions": 10,
+    "durationSeconds": null,
+    "loadKg": 12.5,
+    "notes": null
+  }]
+}
+```
+
+Private-record permission summary:
+
+| Operation | MEMBER | COACH | ADMIN only |
+| --- | --- | --- | --- |
+| Read active exercise catalogue | Own role | Own role | Own role |
+| Manage exercise catalogue | No | Yes | Yes |
+| Create/edit/review/publish programme | No | Assigned members only | No |
+| Read programme | Own published only | Assigned members | No |
+| Create/edit/delete workout log | Own member profile | No | No |
+| Read workout log/progress | Own member profile | Assigned members | No |
+
+### M1 identity and assignment integration
+
+The existing M1 API provides the profile/assignment contract:
+`GET /api/membership/me` maps the validated subject to its business profile;
+`GET /api/membership/coach/assigned-members` returns that coach's current
+assigned profile IDs. Training-service calls these M1 endpoints using the
+incoming user's bearer token, so M1 continues to enforce identity and
+assignment against its own database. Member IDs supplied in a programme
+request are accepted only after the M1 assignment list confirms them. No
+M1 tables are queried or changed, and no tokens are sent through messaging.
+
+The dedicated `training_db` is provisioned by the idempotent
+`training-db-init` Compose job using `TRAINING_DB_USER` /
+`TRAINING_DB_PASSWORD`; the runtime service does not use M1's database
+credentials. Compose defaults these to `training_service` /
+`training-local-change-me` for development, so older `.env` files continue
+to work. Override both values in `.env` for a local custom setup; never use
+the development default in production. Flyway owns schema creation and
+Hibernate uses `validate`.
+On an existing Compose stack, the init job provisions the separate database
+without deleting or recreating the existing PostgreSQL volume.
+
+Start/rebuild the service with the normal command after setting the two
+training database values in `.env`:
+
+```powershell
+docker compose --env-file .env up --build -d training-service frontend
+```
+
+Run the service tests and frontend production build:
+
+```powershell
+mvn -f training-service\pom.xml test
+npm.cmd --prefix frontend run build
+```
+
+Verified on 2026-10-24: the training-service suite passed all 17 tests, the
+Angular production build passed, `docker compose --env-file .env.example
+config --quiet` passed, and the training-service Docker image built. The
+service has not yet been started against a live Compose stack or browser-tested
+with provisioned Keycloak accounts.
+
+The complete training demo seed is repeatable and development-only. Rebuild
+the API first so the development provisioning endpoint returns profile
+identifiers via its existing provisioning contract, then run:
+
+```powershell
+docker compose up --build -d api training-service frontend
+.\scripts\seed-training-demo.ps1
+```
+
+It uses Keycloak's admin API to find the existing dev accounts, sends their
+profile/assignment setup through M1's protected development provisioning
+endpoint, then seeds only `training_db`. It does not reset user passwords or
+read/write M1's database. Re-running is safe and refreshes the deterministic
+sample catalogue/programmes/logs.
+
+The sample coach can inspect a published plan, a plan pending review, and a
+draft for Member A, plus Member B's published starter plan. Sign in as
+`gym-coach` to review/publish drafts; `member-a` and `member-b` can view their
+own published plans. Member A has three sample logs across different dates,
+with both explicit load/repetition and timed/bodyweight sets for progress
+screens. Exercises include squat, push-up, dumbbell row, and timed plank.
+
+After seeding, open `http://localhost:8088/training` and refresh if the SPA
+was already open. As `gym-coach`, open **Programmes** to see draft, pending
+review, and published states; submit the draft, approve the pending revision,
+and publish it to exercise those transitions. As `member-a`, open **Programmes**
+to see only the published plan, then **Workout history** to inspect sample
+logs and progress or add/edit/delete a standalone log. As `member-b`, verify
+that only Member B's own published plan is visible. The exercise catalogue
+supports coach/admin create, edit, search/filter, and archive.
+
+The asynchronous AI-generation and generated-image features are not
+implemented, so no seeded records pretend to demonstrate them.
+
+The programme screen currently creates/edits a single-session, single-item
+draft and presents review/publication actions. The API supports multiple
+sessions/items; a full dynamic Angular programme editor and member-side
+workout-from-programme UI remain unfinished.
+
+### M3 workflow and delivery limits
+
+Programme lifecycle:
+
+```mermaid
+stateDiagram-v2
+  [*] --> DRAFT
+  DRAFT --> PENDING_REVIEW: submit
+  CHANGES_REQUESTED --> PENDING_REVIEW: resubmit
+  PENDING_REVIEW --> APPROVED: approve current revision
+  PENDING_REVIEW --> CHANGES_REQUESTED: request changes
+  APPROVED --> DRAFT: edit draft invalidates approval
+  APPROVED --> PUBLISHED: publish current revision
+  PUBLISHED --> ARCHIVED: archive
+  PUBLISHED --> PUBLISHED: create linked DRAFT record
+```
+
+Coach review/publication is server-enforced. New revisions are separate
+linked draft records, so changing a draft cannot mutate the published source.
+
+Training database relationships (membership IDs are external UUID references
+and deliberately have no cross-database foreign keys):
+
+```mermaid
+erDiagram
+  EXERCISE ||--o{ PROGRAMME_ITEM : prescribes
+  TRAINING_PROGRAMME ||--o{ PROGRAMME_SESSION : contains
+  PROGRAMME_SESSION ||--o{ PROGRAMME_ITEM : orders
+  TRAINING_PROGRAMME ||--o{ COACH_REVIEW : records
+  TRAINING_PROGRAMME ||--o{ WORKOUT_LOG : optional_source
+  PROGRAMME_SESSION ||--o{ WORKOUT_LOG : optional_source
+  WORKOUT_LOG ||--o{ WORKOUT_SET : records
+  EXERCISE ||--o{ WORKOUT_SET : performed
+  EXTERNAL_MEMBER ||--o{ TRAINING_PROGRAMME : owns
+  EXTERNAL_MEMBER ||--o{ WORKOUT_LOG : logs
+```
+
+RabbitMQ and Ollama are not present in the core Compose stack, and there are
+no existing RabbitMQ message conventions to reuse. A minimum private
+development runtime is provided in `docker-compose.messaging.yml`; M5 must
+approve/own it before shared use. Start the infrastructure overlay after
+setting its development credentials:
+
+```powershell
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.messaging.yml up -d rabbitmq ollama
+```
+
+It exposes no host ports, persists its data, and does not download an Ollama
+model. Configure/pull a chosen local model manually only after the AI adapter
+is implemented. Consequently,
+the asynchronous AI job/outbox/inbox workflow, real Ollama adapter, prompt
+templates/validation/retries, and optional image generation are not
+implemented or represented as complete. Before Phase 5, M5 must approve a
+single RabbitMQ deployment, durable exchanges/queues, publisher-confirm and
+dead-letter conventions, and worker storage ownership. Ollama should remain
+opt-in with a pinned model configured explicitly; normal startup must not pull
+a model. The optional illustration feature, sample AI jobs, and generated-
+media storage are also unfinished.
+
+Not delivered in this checkpoint: AI generation (Phase 5), illustrations
+(Phase 6), comprehensive production integration/browser tests and diagrams
+beyond the programme state machine (Phase 7), full multi-session Angular
+editing, and development seed references to M1 coach/member records. M1
+profile IDs must be provisioned by the shared development workflow rather
+than by modifying M1 or its database.

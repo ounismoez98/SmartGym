@@ -4,12 +4,13 @@
 > decisions, verification, or next priorities materially change. Do not store
 > credentials, tokens, personal data, or copies of `.env` here.
 
-## Current checkpoint — 2026-10-16
+## Current checkpoint — 2026-10-24
 
 ### Project state
 
-- Repository started empty (no prior application/commits); current branch is
-  `main`. Initial runnable authentication vertical slice has been created.
+- Initial runnable authentication vertical slice exists. M3 Phases 2–4 now
+  include the isolated training-service, exercise catalogue, programme
+  review/publication workflow, workout logs, and deterministic progress.
 - Development stack was started and browser-smoke-tested at
   `http://localhost:8088`; Keycloak is at `http://localhost:8080`.
 - Local secrets are in ignored `.env`; use `.env.example` as the template and
@@ -57,12 +58,33 @@
   Keycloak database access.
 - `README.md`: startup instructions, development-only HTTP and account setup,
   production HTTPS guidance, ownership and acceptance status.
+- `training-service/`: independent Spring Boot 3.4.5 / Java 21 application,
+  separate `training_db` runtime identity, Flyway schema, Keycloak JWT
+  issuer/audience/role validation, paginated catalogue, programme
+  revision/review/publication workflow, member-owned workout logs and
+  progress. `/api/training` is routed to this service through Nginx.
+- `docker-compose.messaging.yml`: pinned private RabbitMQ/Ollama development
+  overlay; it is not part of normal startup and is not wired to an M3 worker.
+- `scripts/seed-training-demo.ps1` + `.sql`: repeatable development data for
+  four exercises, four programmes in draft/review/published states, a review
+  record, and three Member A workout logs. It resolves current M1 profile
+  identifiers through the protected development provisioning response and
+  writes only to `training_db`.
+- M3 resolves authenticated business profiles and coach assignments through
+  the existing M1 `/api/membership/me` and
+  `/api/membership/coach/assigned-members` endpoints, forwarding the original
+  user bearer token for the synchronous HTTP check. M3 does not access M1's
+  database.
 
 ### Verified
 
-- `npm.cmd run build` from `frontend/`: passed.
+- `npm.cmd --prefix frontend run build`: passed with lazy exercise,
+  programme, and workout routes.
 - `mvn.cmd -B test` from `backend/` using Java 21: passed, 8 tests.
+- `mvn.cmd -B -f training-service\pom.xml test`: passed, 17 tests (H2).
 - `docker compose --env-file .env.example config --quiet`: passed.
+- `docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.messaging.yml config --quiet`: passed.
+- Training-service Docker image build passed.
 - Compose stack started; Angular and Keycloak returned HTTP 200.
 - Browser: landing → hosted Keycloak login → dashboard; invalid credentials
   display Keycloak feedback; signed-in dashboard successfully called
@@ -75,6 +97,16 @@
   role denials (`403`) and Member A/B record isolation.
 - Session expiry was **not explicitly browser-simulated**. Browser showed a
   non-fatal Keycloak hidden-iframe sandbox warning; login and callback worked.
+- M3 Phase 2–4 automated API tests cover exercise roles/validation/archive,
+  programme assignment checks, revision/review/publish, stale edits, private
+  drafts, workout ownership, invalid prescriptions, and progress math.
+- Demo seed was run twice successfully; database remained at 4 exercises,
+  4 programmes (1 DRAFT, 1 PENDING_REVIEW, 2 PUBLISHED), 3 logs, and 6 sets.
+- Rebuilt/recreated API, training-service, and frontend containers; UI
+  returned HTTP 200 and training-service actuator reported UP.
+- New M3 Compose service has not been started against the running Keycloak/
+  PostgreSQL stack with real user tokens or browser M3 workflows; live
+  cross-service authorization and browser acceptance remain unverified.
 
 ### Important paths
 
@@ -98,9 +130,14 @@
    authorization behavior but do not verify live signature validation).
 3. Confirm M3 and M4 owners with the team; keep documentation marked pending
    until confirmation. Continue M1/M2 ownership as listed above.
-4. Implement module CRUD only after the security acceptance foundation;
-   enforce authorization and member/coach record isolation server-side.
-5. Before production, switch to HTTPS and managed secrets, remove development
+4. Manually verify seeded M3 routes using gym-coach, member-a, and member-b,
+   especially M1-token forwarding and member data isolation.
+5. Coordinate a shared RabbitMQ deployment and conventions with M5 before
+   implementing M3's async Ollama job/outbox/inbox worker flow; do not pass
+   credentials or access tokens through messaging.
+6. Finish full multi-session Angular programme editing, member programme
+   workout logging, image generation/review, and production acceptance.
+7. Before production, switch to HTTPS and managed secrets, remove development
    ports/profile/provisioning, and configure SMTP before enabling recovery.
 
 ## Update convention

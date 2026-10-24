@@ -20,6 +20,7 @@ public class ProvisioningService {
 
     @Transactional
     public ProvisioningResult provision(ProvisioningRequest request) {
+        java.util.ArrayList<ProvisionedProfile> provisionedProfiles = new java.util.ArrayList<>();
         for (ProvisioningRequest.Profile profile : request.profiles()) {
             BusinessProfile businessProfile = profileRepository.findById(profile.subject())
                     .orElseGet(() -> new BusinessProfile(
@@ -32,6 +33,11 @@ public class ProvisioningService {
                         "Profile type must be MEMBER or EMPLOYEE.");
             }
             profileRepository.save(businessProfile);
+            provisionedProfiles.add(new ProvisionedProfile(
+                    businessProfile.getSubject(),
+                    businessProfile.getUsername(),
+                    businessProfile.getMemberProfileId(),
+                    businessProfile.getEmployeeProfileId()));
         }
 
         List<ProvisioningRequest.CoachAssignmentRequest> assignments =
@@ -51,8 +57,20 @@ public class ProvisioningService {
             }
         }
 
-        return new ProvisioningResult(request.profiles().size(), assignments.size());
+        return new ProvisioningResult(
+                request.profiles().size(),
+                assignments.size(),
+                List.copyOf(provisionedProfiles));
     }
 
-    public record ProvisioningResult(int profilesProcessed, int assignmentsProcessed) {}
+    public record ProvisioningResult(
+            int profilesProcessed,
+            int assignmentsProcessed,
+            List<ProvisionedProfile> profiles) {}
+
+    public record ProvisionedProfile(
+            String subject,
+            String username,
+            java.util.UUID memberProfileId,
+            java.util.UUID employeeProfileId) {}
 }
