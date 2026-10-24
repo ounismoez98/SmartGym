@@ -10,8 +10,8 @@ import com.smartgym.membership.profile.Employee;
 import com.smartgym.membership.profile.EmployeeRepository;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,6 +39,7 @@ public class MembershipController {
     }
 
     @GetMapping("/me")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COACH', 'MEMBER')")
     public MembershipIdentity me(@AuthenticationPrincipal Jwt jwt) {
         List<String> roles = applicationRoles(jwt);
         Member member = roles.contains("MEMBER")
@@ -67,20 +68,13 @@ public class MembershipController {
     }
 
     @GetMapping("/members/{memberProfileId}/private")
+    @PreAuthorize("hasRole('ADMIN') or @accessChecker.isOwner(#p1, authentication) "
+            + "or @accessChecker.isAssignedCoach(#p1, authentication)")
     public PrivateMemberRecord privateMemberRecord(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID memberProfileId) {
         Member member = memberRepository.findById(memberProfileId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Member profile not found."));
-        List<String> roles = applicationRoles(jwt);
-        boolean administrator = roles.contains("ADMIN");
-        boolean memberSelf = roles.contains("MEMBER") && jwt.getSubject().equals(member.getKeycloakUserId());
-        boolean assignedCoach = roles.contains("COACH")
-                && assignmentRepository.existsByCoachSubjectAndMemberSubject(
-                        jwt.getSubject(), member.getKeycloakUserId());
-        if (!administrator && !memberSelf && !assignedCoach) {
-            throw new AccessDeniedException("This member record is not assigned to your account.");
-        }
         return new PrivateMemberRecord(
                 memberProfileId,
                 member.getDisplayName(),
@@ -89,6 +83,7 @@ public class MembershipController {
     }
 
     @GetMapping("/admin/operations")
+    @PreAuthorize("hasRole('ADMIN')")
     public OperationsStatus operationsStatus() {
         return new OperationsStatus(
                 "AVAILABLE",
@@ -96,6 +91,7 @@ public class MembershipController {
     }
 
     @GetMapping("/coach/assigned-members")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COACH')")
     public List<AssignedMember> assignedMembers(@AuthenticationPrincipal Jwt jwt) {
         List<String> assignedSubjects = assignmentRepository.findAllByCoachSubject(jwt.getSubject())
                 .stream()

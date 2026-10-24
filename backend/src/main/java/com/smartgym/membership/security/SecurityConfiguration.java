@@ -10,10 +10,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.convert.converter.Converter;
-import org.springframework.http.HttpMethod;
-import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -31,6 +30,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfiguration {
     private static final Set<String> APPLICATION_ROLES = Set.of("ADMIN", "COACH", "MEMBER");
 
@@ -45,16 +45,25 @@ public class SecurityConfiguration {
                         org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/dev/provision").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/membership/me").authenticated()
-                        .requestMatchers(HttpMethod.GET, "/api/membership/members/*/private").authenticated()
-                        .requestMatchers("/api/membership/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/api/membership/coach/**").hasRole("COACH")
+                        .requestMatchers("/api/membership/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/courses/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/training/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/nutrition/**").hasAnyRole("ADMIN", "MEMBER")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
+                        .authenticationEntryPoint((request, response, exception) ->
+                                ApiErrorWriter.write(
+                                        response,
+                                        401,
+                                        "UNAUTHORIZED",
+                                        "Authentication is required or the access token is invalid."))
+                        .accessDeniedHandler((request, response, exception) ->
+                                ApiErrorWriter.write(
+                                        response,
+                                        403,
+                                        "FORBIDDEN",
+                                        "You are not allowed to access this resource.")))
                 .build();
     }
 
