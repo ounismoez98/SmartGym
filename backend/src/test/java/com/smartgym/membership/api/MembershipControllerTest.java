@@ -4,10 +4,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignment;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -38,7 +41,10 @@ class MembershipControllerTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private BusinessProfileRepository profileRepository;
+    private MemberRepository memberRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
 
     @Autowired
     private CoachAssignmentRepository assignmentRepository;
@@ -46,19 +52,16 @@ class MembershipControllerTest {
     @BeforeEach
     void setUp() {
         assignmentRepository.deleteAll();
-        profileRepository.deleteAll();
-        BusinessProfile memberA = new BusinessProfile(MEMBER_A_SUBJECT, "member-a", "Member A");
-        memberA.ensureMemberProfile();
-        memberAId = memberA.getMemberProfileId();
-        BusinessProfile memberB = new BusinessProfile(MEMBER_B_SUBJECT, "member-b", "Member B");
-        memberB.ensureMemberProfile();
-        memberBId = memberB.getMemberProfileId();
-        BusinessProfile memberC = new BusinessProfile(MEMBER_C_SUBJECT, "member-c", "Member C");
-        memberC.ensureMemberProfile();
-        memberCId = memberC.getMemberProfileId();
-        BusinessProfile coach = new BusinessProfile(COACH_SUBJECT, "gym-coach", "Gym Coach");
-        coach.ensureEmployeeProfile();
-        profileRepository.saveAll(List.of(memberA, memberB, memberC, coach));
+        memberRepository.deleteAll();
+        employeeRepository.deleteAll();
+        Member memberA = new Member(UUID.randomUUID(), MEMBER_A_SUBJECT, "member-a", "Member A");
+        Member memberB = new Member(UUID.randomUUID(), MEMBER_B_SUBJECT, "member-b", "Member B");
+        Member memberC = new Member(UUID.randomUUID(), MEMBER_C_SUBJECT, "member-c", "Member C");
+        memberAId = memberA.getId();
+        memberBId = memberB.getId();
+        memberCId = memberC.getId();
+        memberRepository.saveAll(List.of(memberA, memberB, memberC));
+        employeeRepository.save(new Employee(UUID.randomUUID(), COACH_SUBJECT, "gym-coach", "Gym Coach"));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_A_SUBJECT));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_B_SUBJECT));
     }
@@ -104,7 +107,7 @@ class MembershipControllerTest {
                 .andExpect(jsonPath("$.employeeProfileId").doesNotExist())
                 .andExpect(jsonPath("$.profileStatus").value("ONBOARDING_REQUIRED"))
                 .andExpect(jsonPath("$.onboardingRequired").value(true));
-        org.assertj.core.api.Assertions.assertThat(profileRepository.findById("not-provisioned")).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(memberRepository.findByKeycloakUserId("not-provisioned")).isEmpty();
     }
 
     @Test
@@ -181,6 +184,35 @@ class MembershipControllerTest {
                         .with(jwt().jwt(token -> token.subject(MEMBER_A_SUBJECT)
                                 .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void devProvisioningCreatesMemberEmployeeAndCoachAssignment() throws Exception {
+        mockMvc.perform(post("/api/dev/provision")
+                        .header("X-Provisioning-Key", "test-provisioning-token")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "profiles": [
+                                    {"subject":"provisioned-member","username":"member","displayName":"Provisioned Member","profileType":"MEMBER"},
+                                    {"subject":"provisioned-coach","username":"coach","displayName":"Provisioned Coach","profileType":"EMPLOYEE"}
+                                  ],
+                                  "coachAssignments": [
+                                    {"coachSubject":"provisioned-coach","memberSubject":"provisioned-member"}
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profilesProcessed").value(2))
+                .andExpect(jsonPath("$.assignmentsProcessed").value(1));
+
+        org.assertj.core.api.Assertions.assertThat(memberRepository.findByKeycloakUserId("provisioned-member"))
+                .isPresent();
+        org.assertj.core.api.Assertions.assertThat(employeeRepository.findByKeycloakUserId("provisioned-coach"))
+                .isPresent();
+        org.assertj.core.api.Assertions.assertThat(assignmentRepository
+                .existsByCoachSubjectAndMemberSubject("provisioned-coach", "provisioned-member"))
+                .isTrue();
     }
 
 }

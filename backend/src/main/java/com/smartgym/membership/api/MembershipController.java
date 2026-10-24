@@ -5,9 +5,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,26 +25,34 @@ import org.springframework.web.server.ResponseStatusException;
 public class MembershipController {
     private static final Set<String> APPLICATION_ROLES = Set.of("ADMIN", "COACH", "MEMBER");
 
-    private final BusinessProfileRepository profileRepository;
+    private final MemberRepository memberRepository;
+    private final EmployeeRepository employeeRepository;
     private final CoachAssignmentRepository assignmentRepository;
 
     public MembershipController(
-            BusinessProfileRepository profileRepository,
+            MemberRepository memberRepository,
+            EmployeeRepository employeeRepository,
             CoachAssignmentRepository assignmentRepository) {
-        this.profileRepository = profileRepository;
+        this.memberRepository = memberRepository;
+        this.employeeRepository = employeeRepository;
         this.assignmentRepository = assignmentRepository;
     }
 
     @GetMapping("/me")
     public MembershipIdentity me(@AuthenticationPrincipal Jwt jwt) {
         List<String> roles = applicationRoles(jwt);
-        BusinessProfile profile = profileRepository.findById(jwt.getSubject()).orElse(null);
+        Member member = roles.contains("MEMBER")
+                ? memberRepository.findByKeycloakUserId(jwt.getSubject()).orElse(null)
+                : null;
+        Employee employee = roles.contains("ADMIN") || roles.contains("COACH")
+                ? employeeRepository.findByKeycloakUserId(jwt.getSubject()).orElse(null)
+                : null;
         boolean memberProfileRequired = roles.contains("MEMBER");
         boolean employeeProfileRequired = roles.contains("ADMIN") || roles.contains("COACH");
         boolean missingRequiredProfile = (memberProfileRequired
-                && (profile == null || profile.getMemberProfileId() == null))
+                && member == null)
                 || (employeeProfileRequired
-                && (profile == null || profile.getEmployeeProfileId() == null));
+                && employee == null);
         String profileStatus = roles.isEmpty()
                 ? "NO_APPLICATION_ROLE"
                 : missingRequiredProfile ? "ONBOARDING_REQUIRED" : "COMPLETE";
@@ -50,8 +60,8 @@ public class MembershipController {
                 jwt.getSubject(),
                 displayName(jwt),
                 roles,
-                profile == null ? null : profile.getMemberProfileId(),
-                profile == null ? null : profile.getEmployeeProfileId(),
+                member == null ? null : member.getId(),
+                employee == null ? null : employee.getId(),
                 profileStatus,
                 missingRequiredProfile);
     }
@@ -60,14 +70,14 @@ public class MembershipController {
     public PrivateMemberRecord privateMemberRecord(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID memberProfileId) {
-        BusinessProfile member = profileRepository.findByMemberProfileId(memberProfileId)
+        Member member = memberRepository.findById(memberProfileId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Member profile not found."));
         List<String> roles = applicationRoles(jwt);
         boolean administrator = roles.contains("ADMIN");
-        boolean memberSelf = roles.contains("MEMBER") && jwt.getSubject().equals(member.getSubject());
+        boolean memberSelf = roles.contains("MEMBER") && jwt.getSubject().equals(member.getKeycloakUserId());
         boolean assignedCoach = roles.contains("COACH")
                 && assignmentRepository.existsByCoachSubjectAndMemberSubject(
-                        jwt.getSubject(), member.getSubject());
+                        jwt.getSubject(), member.getKeycloakUserId());
         if (!administrator && !memberSelf && !assignedCoach) {
             throw new AccessDeniedException("This member record is not assigned to your account.");
         }
@@ -91,10 +101,9 @@ public class MembershipController {
                 .stream()
                 .map(assignment -> assignment.getMemberSubject())
                 .toList();
-        return profileRepository.findAllById(assignedSubjects)
+        return memberRepository.findAllByKeycloakUserIdIn(assignedSubjects)
                 .stream()
-                .filter(profile -> profile.getMemberProfileId() != null)
-                .map(profile -> new AssignedMember(profile.getMemberProfileId(), profile.getDisplayName()))
+                .map(profile -> new AssignedMember(profile.getId(), profile.getDisplayName()))
                 .sorted(Comparator.comparing(AssignedMember::displayName))
                 .toList();
     }

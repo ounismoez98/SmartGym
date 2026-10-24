@@ -254,17 +254,25 @@ is not delivered.
 
 The following are not yet delivered:
 
-- Flyway migrations. The current API configuration uses Hibernate
-  `ddl-auto: update` for the development setup; this is not production schema
-  management.
 - Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
   only.
 - The administrative LLM assistant. Ollama is deployed, but the API does not
   call it.
 - SMTP password recovery and production HTTPS.
 
-Current backend tests use MockMvc with simulated JWTs and H2. There are no
-Testcontainers or Angular E2E tests in the repository.
+Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
+Development sample plans and policies are loaded only by the `dev` profile.
+Current backend tests include MockMvc tests with simulated JWTs and H2, plus
+Testcontainers PostgreSQL migration and deletion-guard tests. There are no
+Angular E2E tests in the repository.
+
+Run the backend tests from the `backend` directory:
+
+```powershell
+mvn -B test
+```
+
+Docker Desktop must be running for the Testcontainers PostgreSQL tests.
 
 ## Troubleshooting
 

@@ -8,8 +8,11 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:smartgym}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
 
 app:
   security:
