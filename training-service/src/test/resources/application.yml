@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:training;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+springdoc:
+  api-docs:
+    path: /api/training/openapi
+  swagger-ui:
+    path: /api/training/swagger-ui
+    url: /api/training/openapi
+
+app:
+  security:
+    issuer-uri: http://localhost:8080/realms/smart-gym
+    jwk-set-uri: http://localhost:8080/realms/smart-gym/protocol/openid-connect/certs
+    audience: smart-gym-api
