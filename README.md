@@ -195,6 +195,12 @@ exactly `http://localhost:8088`.
   members, and admins may read any member record. Hiding a link in Angular is
   not used as authorization. Other module API prefixes also require their
   application roles.
+- Membership endpoints delivered under `/api/membership/members`:
+  `POST` (ADMIN), paginated/filterable `GET` list (ADMIN or assigned-member
+  scope for COACH), `GET /{id}` (ADMIN, assigned COACH, or owning MEMBER),
+  `PUT /{id}` (ADMIN; MEMBER may change only their own email and phone), and
+  `POST /{id}/deactivate` (ADMIN). Deactivation is refused while an ACTIVE
+  subscription exists. There is no member `DELETE` endpoint.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in

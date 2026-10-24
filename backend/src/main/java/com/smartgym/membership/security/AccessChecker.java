@@ -42,6 +42,14 @@ public class AccessChecker {
                 .orElse(false);
     }
 
+    public boolean isAdministrator(Authentication authentication) {
+        return hasRole(authentication, "ROLE_ADMIN");
+    }
+
+    public boolean isMember(Authentication authentication) {
+        return hasRole(authentication, "ROLE_MEMBER");
+    }
+
     private static boolean hasRole(Authentication authentication, String role) {
         return authentication != null
                 && authentication.getAuthorities().stream()

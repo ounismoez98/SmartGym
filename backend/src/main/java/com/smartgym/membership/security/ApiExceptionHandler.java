@@ -34,7 +34,14 @@ public class ApiExceptionHandler {
         HandlerMethodValidationException.class
     })
     ResponseEntity<ApiErrorResponse> handleBadRequest(Exception exception) {
-        return response(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "The request is invalid.", Map.of());
+        Map<String, Object> details = exception instanceof MethodArgumentNotValidException validationException
+                ? Map.of("fieldErrors", validationException.getBindingResult().getFieldErrors().stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                org.springframework.validation.FieldError::getField,
+                                error -> error.getDefaultMessage() == null ? "Invalid value." : error.getDefaultMessage(),
+                                (first, ignored) -> first)))
+                : Map.of();
+        return response(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "The request is invalid.", details);
     }
 
     @ExceptionHandler({
