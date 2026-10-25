@@ -1,0 +1,16 @@
+services:
+  mock-llm:
+    image: node:22-alpine
+    working_dir: /mock
+    command: ["node", "mock-llm.mjs"]
+    volumes:
+      - ./frontend/e2e:/mock:ro
+    expose:
+      - "4010"
+
+  api:
+    environment:
+      LLM_BASE_URL: http://mock-llm:4010/openai/v1
+    depends_on:
+      mock-llm:
+        condition: service_started

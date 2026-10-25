@@ -5,16 +5,22 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/smartgym}
     username: ${SPRING_DATASOURCE_USERNAME:smartgym}
-    password: ${SPRING_DATASOURCE_PASSWORD:smartgym}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+  mail:
+    host: ${SPRING_MAIL_HOST:localhost}
+    port: ${SPRING_MAIL_PORT:1025}
 
 app:
   security:
-    issuer-uri: ${APP_SECURITY_ISSUER_URI:http://localhost:8080/realms/smart-gym}
-    jwk-set-uri: ${APP_SECURITY_JWK_SET_URI:http://localhost:8080/realms/smart-gym/protocol/openid-connect/certs}
+    issuer-uri: ${APP_SECURITY_ISSUER_URI:http://localhost:8180/realms/gym}
+    jwk-set-uri: ${APP_SECURITY_JWK_SET_URI:http://localhost:8180/realms/gym/protocol/openid-connect/certs}
     audience: smart-gym-api
   provisioning:
     token: ${APP_PROVISIONING_TOKEN:}
@@ -22,3 +28,10 @@ app:
     api-key: ${GROQ_API_KEY:}
     model: ${GROQ_MODEL:qwen-2.5-32b}
     api-url: ${GROQ_API_URL:https://api.groq.com/openai/v1/chat/completions}
+  llm:
+    base-url: ${LLM_BASE_URL:https://api.groq.com/openai/v1}
+    model: ${LLM_MODEL:llama-3.3-70b-versatile}
+    api-key: ${LLM_API_KEY:}
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:30}
+  mail:
+    from: ${APP_MAIL_FROM:no-reply@smartgym.local}

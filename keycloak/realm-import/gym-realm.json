@@ -1,5 +1,5 @@
 {
-  "realm": "smart-gym",
+  "realm": "gym",
   "enabled": true,
   "displayName": "Smart Gym",
   "loginTheme": "smart-gym",
@@ -24,7 +24,7 @@
   },
   "clients": [
     {
-      "clientId": "smart-gym-frontend",
+      "clientId": "gym-frontend",
       "name": "Smart Gym Angular application",
       "enabled": true,
       "protocol": "openid-connect",
@@ -172,6 +172,44 @@
           }
         }
       ]
+    }
+  ],
+  "users": [
+    {
+      "username": "gym-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "gym-admin@smartgym.local",
+      "firstName": "Gym",
+      "lastName": "Administrator",
+      "attributes": {
+        "developmentOnly": ["true"]
+      },
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "gym-coach",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "gym-coach@smartgym.local",
+      "firstName": "Gym",
+      "lastName": "Coach",
+      "attributes": {
+        "developmentOnly": ["true"]
+      },
+      "realmRoles": ["COACH"]
+    },
+    {
+      "username": "member-a",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "member-a@smartgym.local",
+      "firstName": "Member",
+      "lastName": "A",
+      "attributes": {
+        "developmentOnly": ["true"]
+      },
+      "realmRoles": ["MEMBER"]
     }
   ]
 }

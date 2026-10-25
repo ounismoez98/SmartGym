@@ -16,9 +16,9 @@ foreach ($name in $requiredVariables) {
     }
 }
 
-$keycloakBase = "http://localhost:8080"
+$keycloakBase = "http://localhost:8180"
 $apiBase = "http://localhost:8081"
-$realm = "smart-gym"
+$realm = "gym"
 $adminTokenResponse = Invoke-RestMethod `
     -Method Post `
     -Uri "$keycloakBase/realms/master/protocol/openid-connect/token" `

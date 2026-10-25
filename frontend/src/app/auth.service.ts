@@ -10,9 +10,9 @@ const knownRoutes = new Set([
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly keycloak = new Keycloak({
-    url: 'http://localhost:8080',
-    realm: 'smart-gym',
-    clientId: 'smart-gym-frontend'
+    url: 'http://localhost:8180',
+    realm: 'gym',
+    clientId: 'gym-frontend'
   });
   private refreshAttempted = false;
   private refreshInFlight: Promise<boolean> | null = null;
