@@ -65,6 +65,10 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | `KEYCLOAK_ADMIN_PASSWORD` | Keycloak local administrator password | Yes |
    | `POSTGRES_PASSWORD` | Password for the local PostgreSQL databases | Yes |
    | `PROVISIONING_TOKEN` | Token for the development-only profile provisioning API | Yes |
+   | `DEV_ADMIN_PASSWORD` | Local-only password for `gym-admin` | Provisioning script |
+   | `DEV_COACH_PASSWORD` | Local-only password for `gym-coach` | Provisioning script |
+   | `DEV_MEMBER_A_PASSWORD` | Local-only password for `member-a` | Provisioning script / E2E fallback |
+   | `DEV_MEMBER_B_PASSWORD` | Local-only password for `member-b` | Provisioning script |
    | `RABBITMQ_USER` | RabbitMQ username | Yes |
    | `RABBITMQ_PASSWORD` | RabbitMQ password | Yes |
    | `LLM_BASE_URL` | OpenAI-compatible API base URL; defaults to Groq | No |
@@ -112,6 +116,13 @@ three development accounts (`gym-admin`, `gym-coach`, and `member-a`) without
 passwords. The provisioning script adds `member-b` and sets passwords for
 all four accounts.
 
+| Username | Application role | Password variable |
+| --- | --- | --- |
+| `gym-admin` | `ADMIN` | `DEV_ADMIN_PASSWORD` |
+| `gym-coach` | `COACH` | `DEV_COACH_PASSWORD` |
+| `member-a` | `MEMBER` | `DEV_MEMBER_A_PASSWORD` |
+| `member-b` | `MEMBER` | `DEV_MEMBER_B_PASSWORD` |
+
 The script reads environment variables from the current PowerShell session;
 it does not read `.env` itself. Load the `.env` values into that session:
 
@@ -119,18 +130,9 @@ it does not read `.env` itself. Load the `.env` values into that session:
 Get-Content .env | ForEach-Object { if ($_ -match '^\s*([^#=]+)=(.*)$') { Set-Item "env:$($matches[1].Trim())" $matches[2].Trim() } }
 ```
 
-In addition to the variables in `.env.example`, set these development-only
-passwords in the same PowerShell session. They are not in `.env.example`:
-
-```powershell
-$env:DEV_ADMIN_PASSWORD = "<choose a local-only password>"
-$env:DEV_COACH_PASSWORD = "<choose a local-only password>"
-$env:DEV_MEMBER_A_PASSWORD = "<choose a local-only password>"
-$env:DEV_MEMBER_B_PASSWORD = "<choose a local-only password>"
-```
-
-`PROVISIONING_TOKEN` is also required by the script and must be present in
-the PowerShell session. Then run:
+Replace the four `DEV_*_PASSWORD` placeholders and `PROVISIONING_TOKEN` in
+your ignored local `.env` with unique values. These values are not printed or
+committed. Then run:
 
 ```powershell
 .\scripts\provision-dev.ps1
