@@ -57,6 +57,24 @@ services:
       retries: 30
       start_period: 30s
 
+  # Single private shared broker for the Smart Gym modules. Applications
+  # declare their own durable exchanges, queues, bindings, and retry topology.
+  rabbitmq:
+    image: rabbitmq:4.1.2-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-smartgym}
+    expose:
+      - "5672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   api:
     build:
       context: ./backend
@@ -109,10 +127,19 @@ services:
       APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/smart-gym/protocol/openid-connect/certs
       APP_SECURITY_AUDIENCE: smart-gym-api
       APP_MEMBERSHIP_BASE_URL: http://api:8081
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VHOST:-smartgym}
+      APP_AI_OLLAMA_BASE_URL: http://ollama:11434
+      APP_AI_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     depends_on:
       training-db-init:
         condition: service_completed_successfully
       keycloak:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8082/actuator/health"]
@@ -133,3 +160,4 @@ services:
 volumes:
   smartgym-db:
   keycloak-db:
+  rabbitmq-data:

@@ -212,6 +212,16 @@ owns DDL. The service does not connect to M1's database.
 - Members can list/read their own published programmes only. Coaches can
   manage and review programmes only for currently assigned members. An
   `ADMIN` role alone does not grant access to private programmes or logs.
+- `POST /api/training/programme-generations` accepts coach-authorized goal,
+  level, schedule, duration and equipment inputs and returns `202` with a job
+  ID. `GET /api/training/ai-jobs/{id}` is restricted to coaches currently
+  assigned to that job's member. Completion creates a linked `AI`-origin
+  `DRAFT`; it is never automatically approved or published.
+- Generation includes only a bounded set of active catalogue exercises
+  compatible with requested equipment plus bodyweight exercises. Member
+  names, email addresses, tokens and unrelated profile data are not sent to
+  the model or in RabbitMQ command messages. Unknown, archived, duplicate,
+  equipment-incompatible, malformed or out-of-range output fails the job.
 - `POST /api/training/workout-logs`, `GET /api/training/workout-logs[/{id}]`,
   `PATCH`, and `DELETE` support member-owned logging and coach reads for
   assigned members. Programme/session IDs are checked against the member's
@@ -432,6 +442,8 @@ erDiagram
   PROGRAMME_SESSION ||--o{ PROGRAMME_ITEM : orders
   TRAINING_PROGRAMME ||--o{ COACH_REVIEW : records
   TRAINING_PROGRAMME ||--o{ WORKOUT_LOG : optional_source
+  TRAINING_PROGRAMME o|--o| AI_JOB : generated_from
+  AI_JOB ||--o{ TRAINING_OUTBOX : publishes_request
   PROGRAMME_SESSION ||--o{ WORKOUT_LOG : optional_source
   WORKOUT_LOG ||--o{ WORKOUT_SET : records
   EXERCISE ||--o{ WORKOUT_SET : performed
@@ -439,30 +451,149 @@ erDiagram
   EXTERNAL_MEMBER ||--o{ WORKOUT_LOG : logs
 ```
 
-RabbitMQ and Ollama are not present in the core Compose stack, and there are
-no existing RabbitMQ message conventions to reuse. A minimum private
-development runtime is provided in `docker-compose.messaging.yml`; M5 must
-approve/own it before shared use. Start the infrastructure overlay after
-setting its development credentials:
+### Phase 5 — asynchronous programme generation
+
+The private RabbitMQ development broker is part of the core Compose stack
+with a persistent volume, healthcheck, and configurable `smartgym` virtual
+host. It is not published to the host. M3 declares its own durable topology
+in `training-service`; the broker is intended to be the single shared
+infrastructure deployment. This is the project-local development contract
+implemented at Moez's direction, not independent M5 approval; confirm with
+the shared M5 team before reusing it as a production/shared-environment
+contract.
+
+Messaging contract:
+
+- Durable topic exchange `smartgym.training`; durable direct dead-letter
+  exchange `smartgym.training.dlx`.
+- Request route `training.programme-generation.requested.v1`, worker queue
+  `training.programme-generation.worker.v1`; persistent JSON envelope with
+  `messageId`, `correlationId`, `jobId`, `messageType`, `version`,
+  `occurredAt`, and `payload`.
+- API stores `AiJob` and its request in `training_db`, and the transactional
+  outbox row in the same transaction. The outbox publisher waits for RabbitMQ
+  publisher confirms before marking a row published; unconfirmed rows remain
+  retryable.
+- Worker messages are manually acknowledged only after a result/retry publish
+  is confirmed. Model errors get up to three deliveries via a durable
+  five-second retry queue; exhausted and invalid messages are routed to a
+  durable dead-letter queue. Results use
+  `training.programme-generation.completed.v1` or
+  `training.programme-generation.failed.v1` and a durable result queue.
+- Result handling is idempotent by `jobId`: a job can create at most one
+  programme. The worker component does not update business entities; it
+  returns result events to the training API. The worker has no separate inbox
+  database because RabbitMQ durability/retry plus job-level result
+  idempotency provide its delivery state; the API outbox is in the same
+  transaction database as `AiJob`, as required for atomic job acceptance.
+- No member profile ID, identity token, credential, name, email, or unrelated
+  member data is included in model context or command payload. The model sees
+  the stated goal/constraints and at most 50 active compatible exercises.
+
+Start core services (including the single broker):
 
 ```powershell
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.messaging.yml up -d rabbitmq ollama
+docker compose up --build -d
 ```
 
-It exposes no host ports, persists its data, and does not download an Ollama
-model. Configure/pull a chosen local model manually only after the AI adapter
-is implemented. Consequently,
-the asynchronous AI job/outbox/inbox workflow, real Ollama adapter, prompt
-templates/validation/retries, and optional image generation are not
-implemented or represented as complete. Before Phase 5, M5 must approve a
-single RabbitMQ deployment, durable exchanges/queues, publisher-confirm and
-dead-letter conventions, and worker storage ownership. Ollama should remain
-opt-in with a pinned model configured explicitly; normal startup must not pull
-a model. The optional illustration feature, sample AI jobs, and generated-
-media storage are also unfinished.
+If you already have a `.env` from before Phase 5, add `RABBITMQ_USER` and
+`RABBITMQ_PASSWORD` to it using fresh local-only values; the updated
+`.env.example` shows the required variable names. Do not replace an existing
+`.env` blindly, since it may contain other local credentials.
 
-Not delivered in this checkpoint: AI generation (Phase 5), illustrations
-(Phase 6), and comprehensive production integration/browser tests and
-diagrams beyond the programme state machine (Phase 7). The development seed
-uses the shared M1 provisioning contract to resolve profile IDs and does not
-access or modify M1's database.
+Enable the optional local model runtime only when needed; no model is pulled
+automatically:
+
+```powershell
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.messaging.yml --profile ai up -d ollama
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.messaging.yml exec ollama ollama pull qwen2.5:3b
+```
+
+`OLLAMA_MODEL` in `.env` selects the configured model (replace the pull
+argument to match it). Automated tests use
+`DeterministicFakeProgrammeGenerator`; they do not need RabbitMQ or Ollama.
+M3 owns the M3 prompt and output JSON Schema at
+`training-service/src/main/resources/ai/prompts/programme-generation-v1.txt`
+and `training-service/src/main/resources/ai/programme-generation-v1.schema.json`.
+Session-duration validation estimates four seconds per repetition plus the
+rest between sets; timed sets use their specified duration plus inter-set
+rest. It is a configured plausibility bound, not an exact time prediction.
+
+The generation UI is in the coach programme workspace. It submits a job,
+polls the protected job endpoint, reports failure, and links a completed
+unreviewed draft back to the programme list. AI generation does not publish
+plans. Medical diagnosis, injury rehabilitation and treatment requests are
+rejected with a limitation message.
+
+### Phase 6 — workout voice companion and user-controlled SOS
+
+The member workout page has a voice companion that answers questions from
+verified aggregate workout facts for the signed-in member's last 28 days.
+`POST /api/training/me/workout-insights` is member-role protected, validates a
+question (maximum 300 characters), reads only that member's own recent logs,
+and calculates workout, set, repetition, and explicitly loaded volume totals.
+Only those aggregates and the question are sent to the configured local
+Ollama model; log notes, member IDs, identity tokens, and raw member profiles
+are not included. The application, not the model, calculates the metrics and
+the deterministic encouragement. If Ollama is unavailable the API returns an
+explicit service-unavailable error rather than a fabricated answer.
+
+Voice input is one-shot and starts only after the member activates the
+microphone control. The browser's speech-recognition provider may process
+audio under that provider's own policy; SmartGym does not record or store
+audio. Typed input is always available. Spoken output uses the browser's
+built-in speech synthesis where available. Browser support, microphone
+permissions, internet requirements and privacy behavior vary, so the typed
+workflow remains the fallback. The text request and response use the local
+Ollama configuration described above; no paid LLM API is required.
+
+The SOS check-in is not an audio classifier, monitoring service, or emergency
+dispatch feature. Only an explicit button press starts a local alarm and
+30-second on-screen check-in. The user can cancel it, or can tap a `tel:`
+link for a phone number they entered on that page. That number is neither
+saved nor sent to the server. The timer never places a call automatically,
+including when it expires. Alarm playback depends on the browser tab and
+device; this feature is not a substitute for contacting local emergency
+services. The assistant cannot diagnose pain or injury and is not a medical
+professional.
+
+Acceptance run (2026-10-25): the training-service suite passed 31 tests, the
+membership suite passed 8 tests, the Angular production build passed, both
+core and AI-profile Compose configurations validated, the training-service
+image built, and `git diff --check` passed. The live core stack started
+healthy. Member and coach sign-in, role-aware navigation, seeded catalogue,
+programme/history views, coach assigned-member listing, and member workout
+log create/edit/delete were exercised in the browser. A coach draft with two
+sessions was created and saved; the temporary draft named
+`UI Acceptance Check 2026-10` was archived after testing.
+
+The RabbitMQ topology and connected workers were verified. The optional
+`ollama/ollama:0.12.5` runtime started healthy, `qwen2.5:3b` downloaded
+successfully, and direct local inference passed. In the signed-in member UI,
+a workout-insight request returned a response for 2026-09-27 to 2026-10-25
+matching server totals: 3 workouts, 6 sets, 50 repetitions and 200 kg×reps.
+The typed request correctly showed the service-unavailable response before
+Ollama was available.
+
+In the signed-in coach UI, a one-session beginner programme generation
+completed and created a linked `DRAFT`; it was not approved or published.
+The generated squat and push-up prescriptions were timed 3×60 seconds, so a
+coach should review the exercise selection and prescription before proceeding
+through review/publishing. A separate three-day generation failed the
+programme schema/training-rule validation, and a pre-Ollama request failed
+after bounded retries. Model inference is slow on this laptop's CPU, and
+generation reliability still needs improvement/testing; retain server-side
+validation and do not auto-publish AI drafts.
+
+Browser speech-recognition capability was present, but the attempted capture
+failed and fell back to typed input; speech output was not verified. The
+user-triggered SOS alarm/cancel flow worked with a dummy number and no call
+was made; countdown expiry was not tested. Session expiry interrupted a
+subsequent coach reorder-save check, so reorder persistence, exercise
+create/edit/archive UI, programme review/publish, and full SOS expiry remain
+unverified. The temporary `UI Acceptance Check 2026-10` draft was archived
+after testing. See `PROJECT_MEMORY.md` for the detailed run record and
+remaining checks.
+
+The development seed uses the shared M1 provisioning contract to resolve
+profile IDs and does not access or modify M1's database.

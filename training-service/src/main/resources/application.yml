@@ -13,6 +13,17 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  rabbitmq:
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        default-requeue-rejected: false
+        retry:
+          enabled: false
 
 management:
   endpoints:
@@ -32,6 +43,13 @@ springdoc:
     url: /api/training/openapi
 
 app:
+  ai:
+    messaging:
+      enabled: ${APP_AI_MESSAGING_ENABLED:true}
+    ollama:
+      base-url: ${APP_AI_OLLAMA_BASE_URL:http://localhost:11434}
+      model: ${APP_AI_OLLAMA_MODEL:qwen2.5:3b}
+      timeout: ${APP_AI_OLLAMA_TIMEOUT:90s}
   membership:
     base-url: ${APP_MEMBERSHIP_BASE_URL:http://localhost:8081}
   security:

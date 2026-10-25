@@ -1,12 +1,16 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormArray, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { Subscription, switchMap, takeWhile, timer } from 'rxjs';
 import { MembershipApiService, AssignedMember } from '../membership-api.service';
 import { AuthService } from '../auth.service';
 import { Exercise } from './training-api.service';
 import {
   Programme,
+  AiJob,
+  EquipmentCategory,
+  ProgrammeGenerationInput,
   ProgrammeInput,
   ProgrammeItemInput,
   ProgrammeSessionInput,
@@ -125,6 +129,63 @@ type SessionForm = FormGroup<{
                   </div>
                   <button class="button quiet" type="button" [disabled]="session.controls.items.length >= 20" (click)="addItem(session)">Add exercise</button>
                 </section>
+
+                <section class="account-card ai-card">
+                  <p class="eyebrow">LOCAL AI · DRAFT ONLY</p>
+                  <h2>Generate a programme draft</h2>
+                  <p class="muted">The local model uses only your inputs and a bounded list of active exercises. Its output is unreviewed, not medically verified, and must be reviewed and explicitly published by a coach.</p>
+                  <form [formGroup]="aiForm" (ngSubmit)="generateWithAi()">
+                    <div class="form-grid">
+                      <label>Assigned member
+                        <select formControlName="memberId">
+                          <option value="">Select a member</option>
+                          @for (member of members(); track member.memberProfileId) {
+                            <option [value]="member.memberProfileId">{{ member.displayName }}</option>
+                          }
+                        </select>
+                      </label>
+                      <label>Training goal <input formControlName="goal" maxlength="500" placeholder="Build general strength"></label>
+                      <label>Experience level
+                        <select formControlName="experienceLevel">
+                          <option value="BEGINNER">Beginner</option>
+                          <option value="INTERMEDIATE">Intermediate</option>
+                          <option value="ADVANCED">Advanced</option>
+                        </select>
+                      </label>
+                      <label>Training days per week <input type="number" min="1" max="7" formControlName="trainingDaysPerWeek"></label>
+                      <label>Maximum session duration (minutes) <input type="number" min="15" max="240" formControlName="maxSessionDurationMinutes"></label>
+                      <label>Exercise preferences (optional) <input formControlName="exercisePreferences" maxlength="500"></label>
+                      <label>Non-medical constraints (optional) <input formControlName="nonMedicalConstraints" maxlength="500"></label>
+                    </div>
+                    <fieldset>
+                      <legend>Available training equipment</legend>
+                      <div class="equipment-options">
+                        @for (category of equipmentCategories; track category) {
+                          <label class="checkbox-label">
+                            <input type="checkbox" [checked]="aiForm.controls.availableEquipment.value.includes(category)"
+                              (change)="toggleEquipment($event, category)">
+                            {{ category.replace('_', ' ') }}
+                          </label>
+                        }
+                      </div>
+                    </fieldset>
+                    <button class="button primary" type="submit"
+                      [disabled]="aiRequesting() || isPolling() || members().length === 0">
+                      {{ aiRequesting() ? 'Submitting…' : isPolling() ? 'Generation in progress…' : 'Request AI draft' }}
+                    </button>
+                  </form>
+                  @if (activeAiJob(); as job) {
+                    <div class="job-status" role="status" aria-live="polite">
+                      <strong>Generation job: {{ job.status }}</strong>
+                      @if (job.status === 'QUEUED') { <p>Waiting for the local generation worker. This page will check status automatically.</p> }
+                      @if (job.status === 'FAILED') { <p class="notice error">{{ job.failureReason || 'Generation failed. Review the request and retry.' }}</p> }
+                      @if (job.status === 'COMPLETED' && job.programmeId) {
+                        <p>Draft created. It has not been approved or published.</p>
+                        <a class="button quiet" [routerLink]="['/training/programmes']">View draft in programme list</a>
+                      }
+                    </div>
+                  }
+                </section>
               }
             </div>
             <button class="button quiet" type="button" [disabled]="sessions.length >= 14" (click)="addSession()">Add session</button>
@@ -235,13 +296,20 @@ type SessionForm = FormGroup<{
     .form-actions { justify-content: flex-start; margin-top: 18px; }
     .primary { margin: 0; }
     .muted { color: var(--muted); }
+    .ai-card { margin-top: 24px; }
+    fieldset { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; }
+    legend { padding: 0 6px; color: var(--muted); }
+    .equipment-options { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+    .checkbox-label { display: flex; align-items: center; gap: 7px; }
+    .checkbox-label input { min-height: auto; }
+    .job-status { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
     @media (max-width: 600px) {
       .programme-header, .editor-heading { align-items: flex-start; flex-direction: column; }
       .actions .button { flex: 1 1 100%; }
     }
   `]
 })
-export class ProgrammesComponent implements OnInit {
+export class ProgrammesComponent implements OnInit, OnDestroy {
   private readonly api = inject(TrainingWorkflowsApiService);
   private readonly auth = inject(AuthService);
   private readonly membership = inject(MembershipApiService);
@@ -257,6 +325,14 @@ export class ProgrammesComponent implements OnInit {
   readonly notice = signal('');
   readonly editing = signal<Programme | null>(null);
   readonly statusFilter = signal<ProgrammeStatus | ''>('');
+  readonly activeAiJob = signal<AiJob | null>(null);
+  readonly aiRequesting = signal(false);
+  readonly isPolling = signal(false);
+  readonly equipmentCategories: EquipmentCategory[] = [
+    'BODYWEIGHT', 'DUMBBELL', 'BARBELL', 'KETTLEBELL',
+    'CABLE', 'MACHINE', 'RESISTANCE_BAND', 'OTHER'
+  ];
+  private jobPolling?: Subscription;
   readonly form = this.fb.group({
     memberId: this.fb.control('', Validators.required),
     title: this.fb.control('', [Validators.required, Validators.maxLength(120)]),
@@ -264,6 +340,16 @@ export class ProgrammesComponent implements OnInit {
     experienceLevel: this.fb.control<'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED'>('BEGINNER'),
     durationWeeks: this.fb.control(4, [Validators.required, Validators.min(1), Validators.max(52)]),
     sessions: this.fb.array<SessionForm>([this.createSessionForm()])
+  });
+  readonly aiForm = this.fb.group({
+    memberId: this.fb.control('', Validators.required),
+    goal: this.fb.control('', [Validators.required, Validators.maxLength(500)]),
+    experienceLevel: this.fb.control<'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED'>('BEGINNER'),
+    trainingDaysPerWeek: this.fb.control(3, [Validators.required, Validators.min(1), Validators.max(7)]),
+    maxSessionDurationMinutes: this.fb.control(60, [Validators.required, Validators.min(15), Validators.max(240)]),
+    availableEquipment: this.fb.control<EquipmentCategory[]>(['BODYWEIGHT']),
+    exercisePreferences: this.fb.control('', Validators.maxLength(500)),
+    nonMedicalConstraints: this.fb.control('', Validators.maxLength(500))
   });
 
   get sessions(): FormArray<SessionForm> {
@@ -285,6 +371,10 @@ export class ProgrammesComponent implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.jobPolling?.unsubscribe();
+  }
+
   load(): void {
     this.loading.set(true);
     this.error.set('');
@@ -301,6 +391,53 @@ export class ProgrammesComponent implements OnInit {
     ];
     this.statusFilter.set(statuses.find((status) => status === selected) ?? '');
     this.load();
+  }
+
+  toggleEquipment(event: Event, category: EquipmentCategory): void {
+    const selected = new Set(this.aiForm.controls.availableEquipment.value);
+    if ((event.target as HTMLInputElement).checked) selected.add(category);
+    else selected.delete(category);
+    this.aiForm.controls.availableEquipment.setValue([...selected]);
+  }
+
+  generateWithAi(): void {
+    if (this.aiForm.invalid) {
+      this.aiForm.markAllAsTouched();
+      this.error.set('Complete the required generation fields and use the permitted day/session limits.');
+      return;
+    }
+    const values = this.aiForm.getRawValue();
+    const request: ProgrammeGenerationInput = {
+      memberId: values.memberId,
+      goal: values.goal.trim(),
+      experienceLevel: values.experienceLevel,
+      trainingDaysPerWeek: Number(values.trainingDaysPerWeek),
+      maxSessionDurationMinutes: Number(values.maxSessionDurationMinutes),
+      availableEquipment: values.availableEquipment,
+      exercisePreferences: values.exercisePreferences.trim() || null,
+      nonMedicalConstraints: values.nonMedicalConstraints.trim() || null
+    };
+    this.aiRequesting.set(true);
+    this.error.set('');
+    this.api.requestProgrammeGeneration(request).subscribe({
+      next: (accepted) => {
+        this.aiRequesting.set(false);
+        this.activeAiJob.set({
+          id: accepted.jobId,
+          status: accepted.status,
+          programmeId: null,
+          failureReason: null,
+          createdAt: accepted.createdAt,
+          updatedAt: accepted.createdAt
+        });
+        this.notice.set('Generation queued. The result will be a draft requiring coach review.');
+        this.pollAiJob(accepted.jobId);
+      },
+      error: (error: unknown) => {
+        this.aiRequesting.set(false);
+        this.error.set(this.message(error));
+      }
+    });
   }
 
   exerciseName(id: string): string {
@@ -450,6 +587,30 @@ export class ProgrammesComponent implements OnInit {
     this.action(this.api.reviewProgramme(programme.id, decision, comment), 'Review recorded.');
   }
 
+  private pollAiJob(jobId: string): void {
+    this.jobPolling?.unsubscribe();
+    this.isPolling.set(true);
+    this.jobPolling = timer(0, 2500).pipe(
+      switchMap(() => this.api.getAiJob(jobId)),
+      takeWhile((job) => job.status === 'QUEUED', true)
+    ).subscribe({
+      next: (job) => {
+        this.activeAiJob.set(job);
+        if (job.status === 'COMPLETED') {
+          this.notice.set('AI-generated programme draft is ready for coach review.');
+          this.load();
+        } else if (job.status === 'FAILED') {
+          this.error.set(job.failureReason || 'Programme generation failed. Please adjust the request and try again.');
+        }
+      },
+      error: (error: unknown) => {
+        this.error.set(this.message(error));
+        this.isPolling.set(false);
+      },
+      complete: () => this.isPolling.set(false)
+    });
+  }
+
   private createSessionForm(value?: ProgrammeSessionInput): SessionForm {
     const items = value ? value.items.map((item) => this.createItemForm(item)) : [this.createItemForm()];
     return this.fb.group({
@@ -506,7 +667,11 @@ export class ProgrammesComponent implements OnInit {
   private message(error: unknown): string {
     if (error instanceof HttpErrorResponse && error.status === 409) return 'Programme state or revision changed. Refresh and try again.';
     if (error instanceof HttpErrorResponse && error.status === 403) return 'Membership denied this operation for the selected member.';
-    if (error instanceof HttpErrorResponse && error.status === 400) return 'The programme is invalid. Check its sessions and exercise prescriptions.';
+    if (error instanceof HttpErrorResponse && error.status === 400) {
+      const detail = error.error && typeof error.error.detail === 'string' ? error.error.detail : '';
+      return detail || 'The programme request is invalid. Check its fields and exercise prescriptions.';
+    }
+    if (error instanceof HttpErrorResponse && error.status === 503) return 'Membership verification is temporarily unavailable. Please retry shortly.';
     return 'The programme request failed. Try again after checking the service.';
   }
 }

@@ -8,23 +8,54 @@
 
 ### Project state
 
-- Initial runnable authentication vertical slice exists. M3 Phases 2–4 now
+- Initial runnable authentication vertical slice exists. M3 Phases 2–6 now
   include isolated exercise CRUD, multi-session programme/revision/review
-  workflows, member workout logging, and deterministic progress summaries.
-- The Phase 2–4 implementation has been expanded in this checkpoint with
-  nested session/item CRUD and ordering, a full multi-session coach editor,
-  member logging directly from published programme sessions, multi-set log
-  editing/deletion, programme status filtering, paginated history, weekly
-  activity visualization, and maximum-load summaries. Backend and frontend
-  build checks passed after these changes.
-- “Phases 2–4 complete” means the feature implementation and automated API
-  coverage are in place. Live M3 acceptance through the running Compose stack
-  with real Keycloak tokens and browser role workflows is still outstanding;
-  do not describe end-to-end production acceptance as complete.
+  workflows, member workout logging, deterministic progress summaries, and
+  asynchronous AI programme generation plus a member workout voice companion.
+- The Phase 2–4 implementation includes nested session/item CRUD and ordering,
+  the multi-session coach editor, member logging from published sessions,
+  multi-set log editing/deletion, paginated history, weekly activity and
+  maximum-load summaries. Automated API coverage passed. Live browser
+  acceptance verified member catalogue/programme/history views, a temporary
+  workout log create/edit/delete cycle, coach assigned-member access, and
+  coach draft creation/editing with two sessions. The browser session expired
+  during a subsequent reorder-save attempt, so that save and the remaining
+  review/publish/exercise-management UI flows are not claimed as verified.
+- Phase 5 is implemented. The live RabbitMQ exchange/queues and connected
+  workers were verified; a coach UI generation request was accepted and
+  published through the outbox. The optional Ollama runtime and `qwen2.5:3b`
+  model were started/pulled, and both a direct model inference and app-level
+  workout insight succeeded. App-level programme generation succeeded on a
+  second request, creating a linked AI-origin `DRAFT` without approving or
+  publishing it. An earlier three-day request failed schema/training-rule
+  validation; another pre-Ollama request failed bounded retries. Keep both
+  failures in the test record and require coach review of the generated
+  exercise selections before any publication.
+- Phase 6 is implemented: member-owned 28-day workout insights, browser voice
+  input/output where supported, deterministic encouragement, and explicit
+  user-triggered alarm/check-in with a manual call link. A signed-in member
+  successfully received an Ollama workout-history explanation for the last
+  28 days; its verified totals were 3 workouts, 6 sets, 50 repetitions and
+  200 kg×reps. The earlier typed request correctly surfaced `503` while
+  Ollama was unavailable. Speech recognition was attempted but returned the
+  UI fallback error; browser API capability alone does not establish
+  successful capture. The SOS alarm and cancel action were exercised with a
+  dummy phone value; no call was made, and countdown expiry was not tested.
+  There is no background sound monitoring, injury detection, or automatic
+  emergency call.
+- Automated checks and live-stack acceptance are recorded below; this local
+  browser run does not constitute production acceptance. Stop for user
+  review before implementing another phase.
 - Development stack was started and browser-smoke-tested at
   `http://localhost:8088`; Keycloak is at `http://localhost:8080`.
 - Local secrets are in ignored `.env`; use `.env.example` as the template and
   never copy actual secret values into documentation or source control.
+- Existing `.env` files created before Phase 5 may lack `RABBITMQ_USER` and
+  `RABBITMQ_PASSWORD`; add fresh local values before running Compose. Do not
+  overwrite an existing local `.env` blindly.
+- For this local run, missing RabbitMQ and training database variables were
+  added to the ignored `.env`; no secret values belong in this file or in
+  source control.
 
 ### Ownership and identity rules — preserve these
 
@@ -93,8 +124,42 @@
   own published programme and limits chosen exercises to that session's
   prescriptions. Standalone logs remain supported. Programme-origin logs
   retain their programme/session references when edited.
-- `docker-compose.messaging.yml`: pinned private RabbitMQ/Ollama development
-  overlay; it is not part of normal startup and is not wired to an M3 worker.
+- Core `docker-compose.yml` contains the single private, persistent RabbitMQ
+  development broker (no host port); `docker-compose.messaging.yml` now only
+  contributes opt-in Ollama under profile `ai`. M3 owns its durable exchange,
+  command/result/retry/dead-letter topology and queue worker.
+- Phase 5 persists accepted `AiJob` requests and transactional outbox rows in
+  `training_db`. The outbox publishes only after broker confirmation. A
+  training-service Rabbit listener invokes the configurable Ollama adapter,
+  validates structured output against active compatible exercise IDs and
+  prescription constraints, and publishes result events. The result
+  consumer idempotently stores a linked AI-origin `DRAFT`; it never approves
+  or publishes a plan automatically. No separate worker inbox database was
+  added: the worker does not mutate business state, and result application is
+  idempotent by job ID.
+- Phase 5 APIs: coach-authorized
+  `POST /api/training/programme-generations` returns `202`; protected
+  `GET /api/training/ai-jobs/{id}` reports status. Generation data excludes
+  bearer tokens and member identity/profile details. Ollama does not pull a
+  model during normal startup; it is opt-in and configured by `OLLAMA_MODEL`.
+- Phase 6 adds member-only
+  `POST /api/training/me/workout-insights`: application code computes
+  last-28-day workout/set/repetition/loaded-volume totals and passes those
+  aggregates plus the question to local Ollama; raw logs, notes, member ID
+  and bearer token are not sent. Encouragement is generated deterministically
+  from the verified workout count. A model/service failure is surfaced as
+  `503`, not substituted with invented output.
+- The workout companion blocks pain/injury/treatment questions with a fixed
+  safety response and does not send those questions to the model.
+- The member workout UI uses browser speech recognition only after a
+  microphone-button click and always permits typed questions. Browser speech
+  recognition may use the browser vendor's external service; SmartGym stores
+  no audio. Speech output uses browser synthesis when available.
+- Phase 6 SOS behavior requires a user click, sounds a local browser alarm and
+  runs a visible 30-second check-in. A user-entered phone number remains only
+  in the page's memory and is used only after tapping its `tel:` link. The
+  countdown does not call automatically or infer injury from sound/silence;
+  the browser/device must remain active for the alarm to work.
 - `scripts/seed-training-demo.ps1` + `.sql`: repeatable development data for
   four exercises, four programmes in draft/review/published states, a review
   record, and three Member A workout logs. It resolves current M1 profile
@@ -114,6 +179,22 @@
 - `mvn.cmd -B -f training-service\pom.xml test`: passed, 20 tests (H2),
   covering session/item CRUD and ordering, stale versions, published-session
   workout validation, and rejection of loads on timed/bodyweight sets.
+- `mvn.cmd -B -f training-service\pom.xml test` using Java 21: passed, 29
+  tests total, including AI generation authorization/idempotency/validation,
+  deterministic fake adapter, and worker bounded-retry/DLQ tests.
+- `mvn.cmd -B -f training-service\pom.xml -Dtest=WorkoutControllerTest test`
+  using Java 21: passed, 6 tests, including 28-day own-member filtering,
+  server-calculated metrics, and coach denial for the new insights endpoint.
+- `npm.cmd --prefix frontend run build`: passed with voice entry/output,
+  typed fallback, and manual SOS UI.
+- `npm.cmd --prefix frontend run build`: passed after adding the Phase 5
+  coach generation form and job polling.
+- Core Compose and optional AI-profile Compose configuration checks passed
+  using `.env.example`; the training-service Docker image built successfully.
+- Latest full training-service suite: 31 tests passed; M1 membership suite:
+  8 tests passed. Angular production build, core/AI-profile Compose
+  configuration checks, training-service Docker image build, and
+  `git diff --check` also passed.
 - This shell defaults `java` to JDK 17, which cannot run the Java 21 test
   classes. Set `JAVA_HOME` to
   `C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot` and prepend
@@ -144,13 +225,48 @@
   routes, checks version conflicts, and confirms ordering updates. Workout
   tests additionally exercise a valid published-session log, reject an
   unrelated exercise, and verify member log deletion.
-- Demo seed was run twice successfully; database remained at 4 exercises,
-  4 programmes (1 DRAFT, 1 PENDING_REVIEW, 2 PUBLISHED), 3 logs, and 6 sets.
-- Rebuilt/recreated API, training-service, and frontend containers; UI
-  returned HTTP 200 and training-service actuator reported UP.
-- New M3 Compose service has not been started against the running Keycloak/
-  PostgreSQL stack with real user tokens or browser M3 workflows; live
-  cross-service authorization and browser acceptance remain unverified.
+- Demo seed was run twice successfully; baseline database counts were 4
+  exercises, 4 programmes (1 DRAFT, 1 PENDING_REVIEW, 2 PUBLISHED), 3 logs,
+  and 6 sets. Browser acceptance added a two-session coach draft named
+  `UI Acceptance Check 2026-10`; it was archived after the UI test.
+- Core Compose stack was running; Keycloak, PostgreSQL, and RabbitMQ were
+  healthy, training-service healthcheck reported healthy, and frontend,
+  Keycloak discovery, and membership API returned expected responses
+  (including unauthenticated `401`).
+- Live browser checks verified Member A sign-in, profile/dashboard,
+  membership connection, four seeded exercises, published programme and
+  workout history (3 logs, 50 repetitions, 200 kg×reps); a temporary workout
+  log was created, edited and deleted, restoring the seeded history. Coach
+  sign-in and assigned-member listing worked. A member's coach-only workout
+  route was denied. Coach programme list/editor rendered and the temporary
+  two-session draft was created and saved.
+- Optional Ollama image/model pull completed: `ollama/ollama:0.12.5` is
+  healthy, `qwen2.5:3b` (1.9 GB) is installed, and a direct local inference
+  smoke test returned the expected response.
+- Signed-in member UI: typed workout-insight question completed successfully.
+  The displayed explanation matched server totals for 2026-09-27 to
+  2026-10-25: 3 workouts, 6 sets, 50 repetitions and 200 kg×reps. An earlier
+  request before Ollama was available displayed the expected `503` fallback.
+- Signed-in coach UI: a generation request for one beginner full-body session
+  completed and created `Beginner Strength Training Programme Draft` as a
+  linked `DRAFT`. UI showed a session with bodyweight squat, push-up and front
+  plank prescriptions; the draft remained unapproved/unpublished. Human
+  review remains necessary, especially because the generated 3×60-second
+  prescriptions for squat/push-up may not be sensible demonstrations of the
+  requested strength plan.
+- Another coach generation request (three days/week) failed with
+  `The model returned a programme that did not meet the required JSON schema
+  and training rules.` A pre-Ollama generation request failed bounded retries.
+  The model can be slow on this laptop's CPU; Ollama logs recorded calls up
+  to about 2m27s. At final check, worker/retry queues were empty with one
+  connected worker and one prior failed message remained in the durable DLQ.
+- The temporary `UI Acceptance Check 2026-10` editor test draft was archived
+  after testing; the AI-generated draft was retained as demo data.
+- Speech recognition attempt fell back to typed input; speech output is
+  unverified. The manual SOS link/cancel flow worked; no call was made. The
+  full 30-second SOS expiry behavior, all exercise create/edit/archive UI
+  actions, published-programme review/publish flow, and session reorder
+  persistence were not verified in the browser.
 
 ### Important paths
 
@@ -163,7 +279,7 @@
   `backend/src/test/java/com/smartgym/membership/api/MembershipControllerTest.java`
 - Realm/client/claims: `keycloak/realm-import/smart-gym-realm.json`
 
-## Next work — recommended order
+## Next work — one phase at a time
 
 Implement remaining phases strictly one at a time. For each phase, first
 inspect the relevant prompt requirements and shared-module conventions; then
@@ -171,44 +287,18 @@ implement only that phase, add/run focused tests, update this memory and
 README with actual results, and report blockers before starting the next phase.
 Do not treat a container, stub, mock, or disabled UI as a completed feature.
 
-1. **Phase 5 — asynchronous local LLM programme generation.** Before coding
-   the RabbitMQ integration, coordinate with M5 on the shared broker,
-   ownership, exchange/queue names, durability, publisher confirms, retries,
-   dead-letter handling, and deployment conventions. Then implement the
-   authorized generation API and input validation; persisted `AiJob` and
-   transactional outbox; idempotent worker/inbox; configurable Ollama adapter
-   plus deterministic fake for tests; prompt and strict structured-output
-   validation against active exercise IDs and numeric prescription rules;
-   retry/failure states; protected job status; Angular generation form and
-   polling/cleanup. AI output must create an unpublished draft only—coach
-   review and explicit publication remain separate. Never put bearer tokens
-   or credentials in messages. Add tests for valid output, malformed output,
-   unknown exercises, invalid numbers, timeout, duplicate delivery and
-   retry/DLQ behavior. Document opt-in model setup without pulling a large
-   model during normal startup. **Stop after Phase 5 validation and report.**
-2. **Phase 6 — optional exercise illustrations.** Start only after Phase 5 is
-   finished and reviewed. Keep image generation behind an explicit feature
-   flag/profile with a separate model/provider; implement generation-job
-   tracking, protected file storage/preview, start/finish image validation,
-   coach approve/reject with required rejection reason, and approved-image
-   display. Add storage persistence/configuration without public file access
-   or public-by-default ports. When disabled, explain the feature state in the
-   UI and API rather than presenting mock images as real. Test authorization,
-   validation, review transitions, and disabled behavior. **Stop after Phase 6
-   validation and report.**
-3. **Phase 7 — acceptance, tests, and delivery.** Start only after Phase 6
-   is complete or its optional/disabled scope is explicitly agreed. Verify
-   real signed Keycloak JWT issuer/audience/expiry/role checks and M1 bearer
-   forwarding, coach assignment enforcement, member isolation, shared-role
-   behavior and ADMIN private-record restrictions. Run Compose and migrations
-   against PostgreSQL; exercise the Angular coach/member flows in a browser;
-   verify health/readiness and repeatable development seed behavior. Add or
-   complete applicable integration tests and frontend tests, then deliver the
-   ER diagram, state/sequence diagrams, message examples, prompt/validated
-   JSON examples, permission matrix, setup and test commands, actual results,
-   assumptions, and limitations. Do not claim browser/live tests that were
-   not run.
-4. **Independent foundation and coordination follow-ups.** Confirm M3/M4
+1. **Optional browser follow-up.** Review the retained AI-generated draft
+   before submitting it for review. Repeat ordering/review/publish and
+   exercise create/edit/archive checks if a complete UI acceptance matrix is
+   required. Keep SOS testing local and never initiate a real call.
+2. **Improve AI generation reliability if requested.** One real generation
+   completed but a separate request failed model-output validation. Capture
+   or safely expose validation diagnostics and improve prompt/output
+   robustness before claiming dependable generation; retest on CPU because
+   the local model is slow. Do not weaken catalogue, assignment, prescription,
+   or publication validation to force success.
+3. **Stop for user review before implementing any additional phase.**
+   Independent foundation and coordination follow-ups: confirm M3/M4
    developer ownership with the team; retain current pending labels until
    confirmed. Separately test auth expiry/failed refresh and redirect-loop
    protection; investigate the non-fatal Keycloak iframe warning without

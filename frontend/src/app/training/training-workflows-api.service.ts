@@ -5,6 +5,9 @@ import { Exercise, ExercisePage } from './training-api.service';
 export type ProgrammeStatus =
   | 'DRAFT' | 'PENDING_REVIEW' | 'CHANGES_REQUESTED' | 'APPROVED' | 'PUBLISHED' | 'ARCHIVED';
 export type ExperienceLevel = 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
+export type EquipmentCategory =
+  | 'BODYWEIGHT' | 'DUMBBELL' | 'BARBELL' | 'KETTLEBELL'
+  | 'CABLE' | 'MACHINE' | 'RESISTANCE_BAND' | 'OTHER';
 
 export interface ProgrammeItemInput {
   exerciseId: string;
@@ -65,6 +68,26 @@ export interface Programme {
   reviewHistory: CoachReview[];
 }
 
+export interface ProgrammeGenerationInput {
+  memberId: string;
+  goal: string;
+  experienceLevel: ExperienceLevel;
+  trainingDaysPerWeek: number;
+  maxSessionDurationMinutes: number;
+  availableEquipment: EquipmentCategory[];
+  exercisePreferences: string | null;
+  nonMedicalConstraints: string | null;
+}
+
+export interface AiJob {
+  id: string;
+  status: 'QUEUED' | 'COMPLETED' | 'FAILED';
+  programmeId: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WorkoutSetInput {
   exerciseId: string;
   repetitions: number | null;
@@ -101,6 +124,17 @@ export interface Progress {
   trainingVolumeKgRepetitions: number;
   maximumRecordedLoadKgByExercise: Record<string, number>;
   completedWorkoutsByIsoWeek: Record<string, number>;
+}
+
+export interface WorkoutInsightResponse {
+  periodStart: string;
+  periodEnd: string;
+  completedWorkouts: number;
+  recordedSets: number;
+  repetitions: number;
+  loadedVolumeKgRepetitions: number;
+  answer: string;
+  encouragement: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -149,6 +183,17 @@ export class TrainingWorkflowsApiService {
     return this.http.post<Programme>(`${this.base}/programmes/${id}/revisions`, {});
   }
 
+  requestProgrammeGeneration(input: ProgrammeGenerationInput) {
+    return this.http.post<{ jobId: string; status: AiJob['status']; createdAt: string }>(
+      `${this.base}/programme-generations`,
+      input
+    );
+  }
+
+  getAiJob(id: string) {
+    return this.http.get<AiJob>(`${this.base}/ai-jobs/${id}`);
+  }
+
   createWorkout(input: WorkoutLogInput) {
     return this.http.post<WorkoutLog>(`${this.base}/workout-logs`, input);
   }
@@ -174,5 +219,9 @@ export class TrainingWorkflowsApiService {
 
   getProgress() {
     return this.http.get<Progress>(`${this.base}/me/progress`);
+  }
+
+  askWorkoutCompanion(question: string) {
+    return this.http.post<WorkoutInsightResponse>(`${this.base}/me/workout-insights`, { question });
   }
 }

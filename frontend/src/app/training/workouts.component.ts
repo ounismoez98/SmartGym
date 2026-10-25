@@ -1,6 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { FormArray, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Exercise } from './training-api.service';
@@ -10,6 +10,7 @@ import {
   ProgrammeSession,
   TrainingWorkflowsApiService,
   WorkoutLog,
+  WorkoutInsightResponse,
   WorkoutSetInput
 } from './training-workflows-api.service';
 
@@ -20,6 +21,33 @@ type WorkoutSetForm = FormGroup<{
   loadKg: FormControl<number | null>;
   notes: FormControl<string>;
 }>;
+
+interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultLike extends ArrayLike<SpeechRecognitionAlternativeLike> {}
+
+interface SpeechRecognitionEventLike extends Event {
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type SpeechWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
 
 @Component({
   standalone: true,
@@ -64,6 +92,80 @@ type WorkoutSetForm = FormGroup<{
           <p class="metric-note">Loaded volume includes only repetition-based sets with an explicitly recorded load. Timed sets and bodyweight-only sets are excluded.</p>
         </section>
       }
+
+      <section class="account-card companion-card" aria-labelledby="companion-title">
+        <p class="eyebrow">LOCAL AI WORKOUT COMPANION</p>
+        <h2 id="companion-title">Ask about your recent training</h2>
+        <p class="muted">The assistant explains verified totals from your own last 28 days of workout logs. The app calculates the numbers; the local AI explains them.</p>
+        <p class="privacy-note">Voice input is started only when you press the microphone button. Your browser's speech-recognition service may process audio according to its own privacy policy. Audio is not saved by SmartGym. You can always type instead.</p>
+        <form [formGroup]="companionForm" (ngSubmit)="askCompanion()">
+          <label>Question
+            <input formControlName="question" maxlength="300" placeholder="Summarize my last four weeks">
+          </label>
+          <div class="actions">
+            <button class="button quiet" type="button" [disabled]="listening() || sosActive()" (click)="startVoiceInput()">
+              {{ listening() ? 'Listening…' : 'Ask by voice' }}
+            </button>
+            @if (listening()) {
+              <button class="button quiet" type="button" (click)="stopVoiceInput()">Stop microphone</button>
+            }
+            <button class="button primary" type="submit" [disabled]="companionLoading() || companionForm.invalid || sosActive()">
+              {{ companionLoading() ? 'Thinking…' : 'Ask assistant' }}
+            </button>
+          </div>
+        </form>
+        @if (companionError()) { <p class="notice error" role="alert">{{ companionError() }}</p> }
+        @if (companionResponse(); as response) {
+          <div class="companion-answer" aria-live="polite">
+            <h3>Workout summary · {{ response.periodStart }} to {{ response.periodEnd }}</h3>
+            <p>{{ response.answer }}</p>
+            <p><strong>{{ response.encouragement }}</strong></p>
+            <p class="metric-note">
+              Calculated from {{ response.completedWorkouts }} workouts, {{ response.recordedSets }} sets,
+              {{ response.repetitions }} repetitions and {{ response.loadedVolumeKgRepetitions }} kg × repetitions
+              with an explicitly recorded load.
+            </p>
+            <p class="metric-note">This is a training-history explanation, not medical advice. The AI can make mistakes.</p>
+            @if (speechOutputAvailable()) {
+              <button class="button quiet" type="button" (click)="readCompanionResponse(response)">Read aloud</button>
+            }
+          </div>
+        }
+      </section>
+
+      <section class="account-card sos-card" aria-labelledby="sos-title">
+        <h2 id="sos-title">Need help?</h2>
+        <p class="muted">SmartGym does not monitor sounds or detect injuries. If you choose, start a local alarm and 30-second check-in. No call is placed automatically. This is not an emergency service; if you are in immediate danger, call your local emergency services.</p>
+        <label>Emergency number (optional; used only on this page)
+          <input [value]="emergencyNumber()" (input)="updateEmergencyNumber($event)" type="tel" autocomplete="tel"
+                 aria-describedby="emergency-number-help"
+                 placeholder="Enter a number you choose, including country code if needed">
+        </label>
+        <p id="emergency-number-help" class="metric-note">Enter 3–15 digits, optionally starting with +. This number is not saved or sent to the server. A call starts only if you tap the call link.</p>
+        @if (sosSetupError()) { <p class="notice error" role="alert">{{ sosSetupError() }}</p> }
+        <div class="actions">
+          <button class="button sos-button" type="button" [disabled]="sosActive()" (click)="startSosCheckIn()">
+            Start SOS check-in
+          </button>
+          @if (sosActive() && emergencyTel()) {
+            <a class="button primary" [href]="emergencyTel()" (click)="stopSosCheckIn()">Call configured number</a>
+          }
+        </div>
+        @if (sosActive()) {
+          <div class="sos-alert" role="alert" aria-live="assertive">
+            @if (sosCountdown() > 0) {
+              <strong>Alarm active · {{ sosCountdown() }} seconds</strong>
+            } @else {
+              <strong>Check-in ended · alarm remains active until you stop it</strong>
+            }
+            <p>If you need emergency help, call the configured number now. The countdown will not place a call.</p>
+            @if (alarmSoundUnavailable()) {
+              <p>Sound playback is unavailable; the on-screen alert is still active.</p>
+            }
+            <button class="button quiet" type="button" (click)="stopSosCheckIn()">I'm okay — stop alarm</button>
+          </div>
+        }
+      </section>
 
       <section class="account-card">
         <h2>{{ editing() ? 'Edit workout log' : 'Log a workout' }}</h2>
@@ -176,6 +278,12 @@ type WorkoutSetForm = FormGroup<{
     .metrics article { display: grid; gap: 8px; margin: 0; color: var(--muted); }
     .metrics strong { color: var(--accent); font: 700 1.6rem 'Space Grotesk', sans-serif; }
     .progress-card { margin-bottom: 24px; }
+    .companion-card, .sos-card { margin: 24px 0; }
+    .companion-answer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .privacy-note, .metric-note, .muted { color: var(--muted); }
+    .privacy-note { font-size: .88rem; }
+    .sos-button { border: 1px solid #f87171; color: #fecaca; }
+    .sos-alert { margin-top: 16px; padding: 16px; border: 1px solid #f87171; border-radius: 10px; background: rgb(127 29 29 / 20%); }
     .week-chart { display: flex; align-items: end; gap: 12px; min-height: 160px; overflow-x: auto; padding: 16px 4px 0; }
     .week-column { display: grid; justify-items: center; align-content: end; gap: 6px; min-width: 54px; height: 140px; }
     .week-count, .week-label { color: var(--muted); font-size: .78rem; }
@@ -195,7 +303,7 @@ type WorkoutSetForm = FormGroup<{
     @media (max-width: 600px) { .actions .button { flex: 1; } }
   `]
 })
-export class WorkoutsComponent implements OnInit {
+export class WorkoutsComponent implements OnInit, OnDestroy {
   private readonly api = inject(TrainingWorkflowsApiService);
   private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder).nonNullable;
@@ -210,6 +318,21 @@ export class WorkoutsComponent implements OnInit {
   readonly error = signal('');
   readonly notice = signal('');
   readonly editing = signal<WorkoutLog | null>(null);
+  readonly companionLoading = signal(false);
+  readonly companionResponse = signal<WorkoutInsightResponse | null>(null);
+  readonly companionError = signal('');
+  readonly listening = signal(false);
+  readonly sosActive = signal(false);
+  readonly sosCountdown = signal(30);
+  readonly alarmSoundUnavailable = signal(false);
+  readonly sosSetupError = signal('');
+  readonly emergencyNumber = signal('');
+  readonly speechOutputAvailable = signal(
+    typeof window !== 'undefined' && 'speechSynthesis' in window
+  );
+  readonly companionForm = this.fb.group({
+    question: this.fb.control('Summarize my recent training', [Validators.required, Validators.maxLength(300)])
+  });
   readonly form = this.fb.group({
     programmeId: this.fb.control(''),
     programmeSessionId: this.fb.control(''),
@@ -243,6 +366,123 @@ export class WorkoutsComponent implements OnInit {
       error: (error: unknown) => this.error.set(this.message(error))
     });
     this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    this.stopVoiceInput();
+    this.stopSosCheckIn();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  startVoiceInput(): void {
+    const speechWindow = window as SpeechWindow;
+    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      this.companionError.set('Voice input is unavailable in this browser. Type your question instead.');
+      return;
+    }
+
+    this.stopVoiceInput();
+    this.companionError.set('');
+    const recognition = new Recognition();
+    recognition.lang = navigator.language;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) this.companionForm.controls.question.setValue(transcript.slice(0, 300));
+    };
+    recognition.onerror = () => {
+      this.companionError.set('Voice input did not work. Check microphone permission or type your question.');
+    };
+    recognition.onend = () => {
+      this.listening.set(false);
+      this.recognition = null;
+    };
+    this.recognition = recognition;
+    this.listening.set(true);
+    try {
+      recognition.start();
+    } catch (error) {
+      this.listening.set(false);
+      this.recognition = null;
+      if (!(error instanceof DOMException)) throw error;
+      this.companionError.set('Could not start voice input. Check microphone permission or type your question.');
+    }
+  }
+
+  stopVoiceInput(): void {
+    this.recognition?.stop();
+    this.recognition = null;
+    this.listening.set(false);
+  }
+
+  askCompanion(): void {
+    if (this.companionForm.invalid) {
+      this.companionForm.markAllAsTouched();
+      return;
+    }
+    this.companionLoading.set(true);
+    this.companionError.set('');
+    this.api.askWorkoutCompanion(this.companionForm.controls.question.value.trim()).subscribe({
+      next: (response) => {
+        this.companionResponse.set(response);
+        this.companionLoading.set(false);
+        this.speak(`${response.answer} ${response.encouragement}`);
+      },
+      error: (error: unknown) => {
+        this.companionError.set(this.message(error));
+        this.companionLoading.set(false);
+      }
+    });
+  }
+
+  readCompanionResponse(response: WorkoutInsightResponse): void {
+    this.speak(`${response.answer} ${response.encouragement}`);
+  }
+
+  startSosCheckIn(): void {
+    this.stopSosCheckIn();
+    this.stopVoiceInput();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    this.sosActive.set(true);
+    this.sosCountdown.set(30);
+    this.alarmSoundUnavailable.set(false);
+    this.playAlarmBeep();
+    this.sosTimer = window.setInterval(() => {
+      const remaining = this.sosCountdown() - 1;
+      this.sosCountdown.set(Math.max(0, remaining));
+      this.playAlarmBeep();
+    }, 1000);
+  }
+
+  stopSosCheckIn(): void {
+    if (this.sosTimer !== undefined) {
+      window.clearInterval(this.sosTimer);
+      this.sosTimer = undefined;
+    }
+    this.sosActive.set(false);
+    this.audioContext?.close();
+    this.audioContext = null;
+  }
+
+  updateEmergencyNumber(event: Event): void {
+    const value = (event.target as HTMLInputElement).value.trim();
+    const normalized = value.replace(/[^\d+]/g, '');
+    if (value && (!/^[+0-9() .-]{3,30}$/.test(value) || !/^\+?\d{3,15}$/.test(normalized))) {
+      this.emergencyNumber.set('');
+      this.sosSetupError.set('Enter a valid phone number using 3–15 digits and an optional leading +.');
+      return;
+    }
+    this.sosSetupError.set('');
+    this.emergencyNumber.set(value);
+  }
+
+  emergencyTel(): string {
+    const number = this.emergencyNumber().replace(/[^\d+]/g, '');
+    return /^\+?\d{3,15}$/.test(number) ? `tel:${number}` : '';
   }
 
   refresh(): void {
@@ -448,6 +688,40 @@ export class WorkoutsComponent implements OnInit {
     });
   }
 
+  private recognition: SpeechRecognitionLike | null = null;
+  private sosTimer?: number;
+  private audioContext: AudioContext | null = null;
+
+  private speak(text: string): void {
+    if (!this.speechOutputAvailable()) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
+
+  private playAlarmBeep(): void {
+    if (this.alarmSoundUnavailable()) return;
+    if (!('AudioContext' in window)) {
+      this.alarmSoundUnavailable.set(true);
+      return;
+    }
+    try {
+      this.audioContext ??= new AudioContext();
+      const oscillator = this.audioContext.createOscillator();
+      const gain = this.audioContext.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.12, this.audioContext.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(this.audioContext.destination);
+      oscillator.start();
+      oscillator.stop(this.audioContext.currentTime + 0.18);
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+      this.alarmSoundUnavailable.set(true);
+    }
+  }
+
+
   private resetForm(): void {
     this.form.reset({
       programmeId: '',
@@ -472,6 +746,7 @@ export class WorkoutsComponent implements OnInit {
     if (error instanceof HttpErrorResponse && error.status === 409) return 'This workout changed elsewhere. Reload and try again.';
     if (error instanceof HttpErrorResponse && error.status === 403) return 'The server denied access to this workout resource.';
     if (error instanceof HttpErrorResponse && error.status === 400) return 'The workout data is invalid. Check your entries.';
+    if (error instanceof HttpErrorResponse && error.status === 503) return 'The local AI assistant is unavailable. Start Ollama or try again later.';
     return 'The workout request failed. Try again after checking the service.';
   }
 }

@@ -1,6 +1,10 @@
 package com.smartgym.training.api;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,8 +16,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartgym.training.ai.WorkoutInsightContext;
+import com.smartgym.training.ai.WorkoutInsightGenerator;
 import com.smartgym.training.domain.EquipmentCategory;
 import com.smartgym.training.domain.Exercise;
 import com.smartgym.training.domain.ExerciseDifficulty;
@@ -22,6 +31,8 @@ import com.smartgym.training.domain.MuscleGroup;
 import com.smartgym.training.domain.ProgrammeItem;
 import com.smartgym.training.domain.ProgrammeSession;
 import com.smartgym.training.domain.TrainingProgramme;
+import com.smartgym.training.domain.WorkoutLog;
+import com.smartgym.training.domain.WorkoutSet;
 import com.smartgym.training.integration.MembershipClient;
 import com.smartgym.training.repository.ExerciseRepository;
 import com.smartgym.training.repository.TrainingProgrammeRepository;
@@ -34,6 +45,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,6 +74,9 @@ class WorkoutControllerTest {
 
     @MockitoBean
     private MembershipClient membershipClient;
+
+    @MockitoBean
+    private WorkoutInsightGenerator insightGenerator;
 
     private UUID exerciseId;
 
@@ -240,6 +255,72 @@ class WorkoutControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(workoutRequest(exerciseId, null, 30, 5.0)))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void memberInsightUsesOnlyTheirRecentLogsAndCalculatedFacts() throws Exception {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        workoutLogRepository.save(new WorkoutLog(
+                MEMBER_ID,
+                null,
+                null,
+                now,
+                null,
+                List.of(
+                        new WorkoutSet(exerciseId, 1, 10, null, BigDecimal.valueOf(12.5), null),
+                        new WorkoutSet(exerciseId, 2, null, 30, null, null))));
+        workoutLogRepository.save(new WorkoutLog(
+                OTHER_MEMBER_ID,
+                null,
+                null,
+                now,
+                null,
+                List.of(new WorkoutSet(exerciseId, 1, 100, null, BigDecimal.valueOf(100), null))));
+        workoutLogRepository.save(new WorkoutLog(
+                MEMBER_ID,
+                null,
+                null,
+                now.minusDays(40),
+                null,
+                List.of(new WorkoutSet(exerciseId, 1, 50, null, BigDecimal.valueOf(50), null))));
+        when(insightGenerator.answer(anyString(), any(WorkoutInsightContext.class)))
+                .thenReturn("You recorded one workout in this period.");
+
+        mvc.perform(post("/api/training/me/workout-insights")
+                        .with(principal(MEMBER_SUBJECT, "member-token", "MEMBER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"Summarize my recent training\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.completedWorkouts").value(1))
+                .andExpect(jsonPath("$.recordedSets").value(2))
+                .andExpect(jsonPath("$.repetitions").value(10))
+                .andExpect(jsonPath("$.loadedVolumeKgRepetitions").value(125.0))
+                .andExpect(jsonPath("$.answer").value("You recorded one workout in this period."))
+                .andExpect(jsonPath("$.encouragement").isNotEmpty());
+        ArgumentCaptor<WorkoutInsightContext> facts = ArgumentCaptor.forClass(WorkoutInsightContext.class);
+        verify(insightGenerator).answer(eq("Summarize my recent training"), facts.capture());
+        org.junit.jupiter.api.Assertions.assertEquals(1, facts.getValue().completedWorkouts());
+        org.junit.jupiter.api.Assertions.assertEquals(2, facts.getValue().recordedSets());
+        org.junit.jupiter.api.Assertions.assertEquals(0, facts.getValue().loadedVolumeKgRepetitions()
+                .compareTo(BigDecimal.valueOf(125)));
+
+        mvc.perform(post("/api/training/me/workout-insights")
+                        .with(principal("coach-subject", "coach-token", "COACH"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"Summarize my recent training\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void workoutAssistantDoesNotSendInjuryQuestionsToTheModel() throws Exception {
+        mvc.perform(post("/api/training/me/workout-insights")
+                        .with(principal(MEMBER_SUBJECT, "member-token", "MEMBER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"question\":\"Could this pain mean I am injured?\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answer").value(
+                        org.hamcrest.Matchers.containsString("cannot assess or advise")));
+        org.mockito.Mockito.verifyNoInteractions(insightGenerator);
     }
 
     private static String workoutRequest(UUID exerciseId, Integer repetitions, Integer duration, Double load) {

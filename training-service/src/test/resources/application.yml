@@ -8,6 +8,10 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
 
 springdoc:
   api-docs:
@@ -17,6 +21,9 @@ springdoc:
     url: /api/training/openapi
 
 app:
+  ai:
+    messaging:
+      enabled: false
   security:
     issuer-uri: http://localhost:8080/realms/smart-gym
     jwk-set-uri: http://localhost:8080/realms/smart-gym/protocol/openid-connect/certs
