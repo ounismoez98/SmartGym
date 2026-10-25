@@ -74,8 +74,9 @@ should use the Nginx `/api/...` URLs.
 
 The API uses Flyway migrations under
 `backend/src/main/resources/db/migration`. `V1__baseline.sql` creates the
-initial PostgreSQL schema; V2–V5 add calorie-target mode, generation-context
-snapshots, persistent dated plans, and saved goals/preferences/hydration.
+initial PostgreSQL schema; V2–V6 add calorie-target mode, generation-context
+snapshots, persistent dated plans, saved goals/preferences/hydration, and
+feedback persistence.
 New installations using a fresh, empty database apply the complete migration
 sequence on first API startup; Hibernate validates the mapped schema and does
 not modify it. If the Compose PostgreSQL volume already contains a database,
