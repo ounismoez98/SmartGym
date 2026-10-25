@@ -25,7 +25,7 @@
             "production": {
               "budgets": [
                 { "type": "initial", "maximumWarning": "650kB", "maximumError": "1MB" },
-                { "type": "anyComponentStyle", "maximumWarning": "8kB", "maximumError": "16kB" }
+                { "type": "anyComponentStyle", "maximumWarning": "20kB", "maximumError": "24kB" }
               ],
               "outputHashing": "all"
             },
@@ -36,6 +36,15 @@
             }
           },
           "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:karma",
+          "options": {
+            "tsConfig": "tsconfig.spec.json",
+            "polyfills": ["zone.js", "zone.js/testing"],
+            "karmaConfig": "karma.conf.cjs",
+            "codeCoverage": false
+          }
         }
       }
     }

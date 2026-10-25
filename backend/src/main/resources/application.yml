@@ -8,10 +8,16 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:smartgym}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
 
 app:
+  groq:
+    api-key: ${GROQ_API_KEY:}
+    model: ${GROQ_MODEL:openai/gpt-oss-20b}
+  llm:
+    connect-timeout: ${APP_LLM_CONNECT_TIMEOUT:5s}
+    read-timeout: ${APP_LLM_READ_TIMEOUT:120s}
   security:
     issuer-uri: ${APP_SECURITY_ISSUER_URI:http://localhost:8080/realms/smart-gym}
     jwk-set-uri: ${APP_SECURITY_JWK_SET_URI:http://localhost:8080/realms/smart-gym/protocol/openid-connect/certs}

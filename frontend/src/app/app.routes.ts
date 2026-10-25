@@ -5,8 +5,11 @@ import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
 import { FeedbackComponent } from './feedback.component';
 import { MessagePageComponent } from './message-page.component';
+import { NutritionWorkspaceComponent } from './nutrition-workspace.component';
+import { CoachNutritionComponent } from './coach-nutrition.component';
 
 const moduleRoles = ['ADMIN', 'COACH', 'MEMBER'];
+const nutritionRoles = ['ADMIN', 'MEMBER'];
 
 export const appRoutes: Routes = [
   { path: '', component: LandingComponent },
@@ -31,9 +34,15 @@ export const appRoutes: Routes = [
   },
   {
     path: 'nutrition',
-    component: ModuleComponent,
+    component: NutritionWorkspaceComponent,
     canActivate: [authGuard, roleGuard],
-    data: { title: 'Nutrition', module: 'M4', description: 'Nutrition plans and member resources.', roles: moduleRoles }
+    data: { title: 'Nutrition', module: 'M4', description: 'Nutrition plans and member resources.', roles: nutritionRoles }
+  },
+  {
+    path: 'coach/nutrition',
+    component: CoachNutritionComponent,
+    canActivate: [authGuard, roleGuard],
+    data: { title: 'Coach Nutrition', module: 'M4', description: 'Review and edit meal suggestions for assigned members.', roles: ['COACH'] }
   },
   {
     path: 'feedback',

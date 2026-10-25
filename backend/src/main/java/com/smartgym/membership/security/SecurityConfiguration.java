@@ -52,6 +52,7 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/feedback").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers(HttpMethod.GET, "/api/feedback/my").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/feedback/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/nutrition/coach/**").hasRole("COACH")
                         .requestMatchers("/api/courses/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/training/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/nutrition/**").hasAnyRole("ADMIN", "MEMBER")
