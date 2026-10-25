@@ -47,7 +47,7 @@ class PostgresMigrationTest {
         assertThat(jdbc.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .contains("1", "2", "100");
+                .contains("1", "2", "3", "4", "100");
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM subscription_plan", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(1);
@@ -82,5 +82,30 @@ class PostgresMigrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM payment WHERE id = ?", String.class, paymentId))
                 .isEqualTo("RECORDED");
+    }
+
+    @Test
+    void enforcesOneActiveSubscriptionPerMember() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        UUID memberId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO member (id, keycloak_user_id, username, display_name) VALUES (?, ?, ?, ?)",
+                memberId, "unique-member-" + memberId, "unique-member", "Unique Member");
+        jdbc.update(
+                "INSERT INTO subscription_plan (id, code, name, description, duration_days, price_cents, currency) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                planId, "UNIQUE-" + planId, "Unique", "Test plan", 30, 1000L, "EUR");
+        insertActiveSubscription(jdbc, memberId, planId);
+
+        assertThatThrownBy(() -> insertActiveSubscription(jdbc, memberId, planId))
+                .isInstanceOf(DataAccessException.class);
+    }
+
+    private static void insertActiveSubscription(JdbcTemplate jdbc, UUID memberId, UUID planId) {
+        jdbc.update(
+                "INSERT INTO subscription (id, member_id, plan_id, starts_at, ends_at) "
+                        + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')",
+                UUID.randomUUID(), memberId, planId);
     }
 }

@@ -8,6 +8,8 @@ import com.smartgym.membership.profile.Employee;
 import com.smartgym.membership.profile.EmployeeRepository;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
+import com.smartgym.membership.profile.MemberSubscription;
+import com.smartgym.membership.profile.MemberSubscriptionRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
@@ -17,14 +19,17 @@ public class AccessChecker {
     private final MemberRepository memberRepository;
     private final CoachAssignmentRepository assignmentRepository;
     private final EmployeeRepository employeeRepository;
+    private final MemberSubscriptionRepository subscriptionRepository;
 
     public AccessChecker(
             MemberRepository memberRepository,
             CoachAssignmentRepository assignmentRepository,
-            EmployeeRepository employeeRepository) {
+            EmployeeRepository employeeRepository,
+            MemberSubscriptionRepository subscriptionRepository) {
         this.memberRepository = memberRepository;
         this.assignmentRepository = assignmentRepository;
         this.employeeRepository = employeeRepository;
+        this.subscriptionRepository = subscriptionRepository;
     }
 
     public boolean isOwner(UUID memberId, Authentication authentication) {
@@ -61,6 +66,19 @@ public class AccessChecker {
 
     public boolean isCoachOwner(UUID employeeId, Authentication authentication) {
         return isEmployeeOwner(employeeId, authentication);
+    }
+
+    public boolean isSubscriptionOwner(UUID subscriptionId, Authentication authentication) {
+        if (!hasRole(authentication, "ROLE_MEMBER") || !(authentication.getPrincipal() instanceof Jwt jwt)) {
+            return false;
+        }
+        return subscriptionRepository.findById(subscriptionId)
+                .map(MemberSubscription::getMemberId)
+                .map(memberId -> memberRepository.findById(memberId)
+                        .map(Member::getKeycloakUserId)
+                        .filter(subject -> normalize(subject).equals(normalize(jwt.getSubject())))
+                        .isPresent())
+                .orElse(false);
     }
 
     public boolean isAdministrator(Authentication authentication) {

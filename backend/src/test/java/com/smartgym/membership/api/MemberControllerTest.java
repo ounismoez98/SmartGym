@@ -281,7 +281,11 @@ class MemberControllerTest {
     @Test
     void deactivateIsAdminOnlyAndConflictsWithActiveSubscription() throws Exception {
         subscriptionRepository.save(new MemberSubscription(
-                UUID.randomUUID(), memberId, MemberSubscription.Status.ACTIVE));
+                UUID.randomUUID(),
+                memberId,
+                UUID.randomUUID(),
+                java.time.Instant.now(),
+                java.time.Instant.now().plusSeconds(3600)));
         mockMvc.perform(post("/api/membership/members/{id}/deactivate", memberId)
                         .with(roleJwt("admin-sub", "ADMIN")))
                 .andExpect(status().isConflict())

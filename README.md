@@ -234,6 +234,17 @@ exactly `http://localhost:8088`.
   ends an active assignment without deleting its history; and `GET
   /api/membership/employees/{coachId}/members` is available to ADMIN or that
   coach. Keycloak accounts are not created or deactivated by these endpoints.
+- Subscription plan endpoints under `/api/membership/plans`: `POST`, `PUT`,
+  and `DELETE` are ADMIN-only; paginated/filterable `GET` list and `GET /{id}`
+  are available to authenticated application roles. A plan referenced by
+  subscription history cannot be deleted; set `active` to `false` instead.
+- Subscription endpoints under `/api/membership/subscriptions`: ADMIN creates,
+  filters, updates, and cancels subscriptions; MEMBER can list and read only
+  their own. Creation starts immediately and calculates `endsAt` from the
+  selected plan duration. `PUT /{id}` changes only `planId` and recalculates
+  `endsAt` from the original `startsAt`. `POST /{id}/cancel` requires a reason.
+  Only one ACTIVE subscription per member is allowed; a daily UTC task marks
+  due subscriptions EXPIRED. There is no subscription `DELETE` endpoint.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in
@@ -289,13 +300,15 @@ The delivered scope is the Keycloak-backed authentication and authorization
 vertical slice: Angular sign-in and route guards, the Spring membership
 identity API, role checks, member ownership checks, and development profile
 provisioning, member and employee CRUD, and coach assignments. The SPA module
-pages are placeholders; subscription and payment CRUD and business CRUD for
-the other modules are not delivered.
+pages are placeholders; subscription plan and subscription management are
+also delivered. Payment management and business CRUD for the other modules
+are not delivered.
 
 The following are not yet delivered:
 
 - Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
   only.
+- Payment recording and correction workflows.
 - The administrative LLM assistant. Groq configuration is prepared, but the
   API does not call an LLM yet.
 - SMTP password recovery and production HTTPS.
@@ -303,8 +316,9 @@ The following are not yet delivered:
 Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
 Development sample plans and policies are loaded only by the `dev` profile.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
-Testcontainers PostgreSQL migration and deletion-guard tests. There are no
-Angular E2E tests in the repository.
+Testcontainers PostgreSQL migration, active-subscription uniqueness, and
+deletion-guard tests. Testcontainers cases are skipped when Docker is
+unavailable. There are no Angular E2E tests in the repository.
 
 Run the backend tests from the `backend` directory:
 
