@@ -1,0 +1,270 @@
+<main class="content membership-content">
+  <a class="back-link" routerLink="/dashboard">← Dashboard</a>
+  <p class="eyebrow">M1 MEMBERSHIP</p>
+  <h1>Membership workspace</h1>
+  <p class="lead">Manage member profiles, subscriptions, payments, employees, and renewal assistance.</p>
+
+  <p *ngIf="loading" class="notice" role="status">Loading…</p>
+  <p *ngIf="errorMessage" class="notice error" role="alert">{{ errorMessage }}</p>
+  <p *ngIf="errorDetails" class="error-details">{{ errorDetails }}</p>
+  <p *ngIf="successMessage" class="notice" role="status">{{ successMessage }}</p>
+
+  <nav class="membership-tabs" aria-label="Membership sections">
+    <button *ngIf="isAdmin || isCoach" type="button" [class.active]="activeTab === 'members'" (click)="selectTab('members')">Members</button>
+    <button *ngIf="isAdmin || isMember" type="button" [class.active]="activeTab === 'subscriptions'" (click)="selectTab('subscriptions')">Subscriptions</button>
+    <button *ngIf="isAdmin || isMember" type="button" [class.active]="activeTab === 'payments'" (click)="selectTab('payments')">Payments</button>
+    <button *ngIf="isAdmin" type="button" [class.active]="activeTab === 'employees'" (click)="selectTab('employees')">Employees</button>
+    <button *ngIf="isAdmin" type="button" [class.active]="activeTab === 'assistant'" (click)="selectTab('assistant')">Assistant</button>
+    <button *ngIf="isMember" type="button" [class.active]="activeTab === 'profile'" (click)="selectTab('profile')">My profile</button>
+  </nav>
+
+  <section *ngIf="activeTab === 'members'" class="workspace-section">
+    <div class="section-heading">
+      <div><p class="eyebrow">DIRECTORY</p><h2>Members</h2></div>
+      <form [formGroup]="memberSearchForm" (ngSubmit)="searchMembers()" class="inline-form">
+        <label>Search<input formControlName="query" placeholder="Name or email"></label>
+        <label>Status<select formControlName="status"><option value="">All</option><option>ACTIVE</option><option>INACTIVE</option></select></label>
+        <button class="button quiet" type="submit">Search</button>
+      </form>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let member of members">
+            <td><button class="table-link" type="button" (click)="selectMember(member)">{{ member.firstName }} {{ member.lastName }}</button></td>
+            <td>{{ member.email }}</td><td><span class="status-pill">{{ member.status }}</span></td>
+            <td class="row-actions">
+              <button class="button quiet compact" type="button" (click)="selectMember(member)">View / edit</button>
+              <button *ngIf="isAdmin && member.status === 'ACTIVE'" class="button quiet compact" type="button" (click)="deactivateMember(member)">Deactivate</button>
+            </td>
+          </tr>
+          <tr *ngIf="members.length === 0"><td colspan="4" class="empty-state">No members found.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div *ngIf="memberTotalPages > 1" class="pagination" aria-label="Member pages">
+      <button class="button quiet compact" type="button" [disabled]="memberPage === 0 || loading" (click)="searchMembers(memberPage - 1)">Previous</button>
+      <span>Page {{ memberPage + 1 }} of {{ memberTotalPages }}</span>
+      <button class="button quiet compact" type="button" [disabled]="memberPage + 1 >= memberTotalPages || loading" (click)="searchMembers(memberPage + 1)">Next</button>
+    </div>
+
+    <form *ngIf="isAdmin" [formGroup]="memberCreateForm" (ngSubmit)="createMember()" class="account-card workspace-card">
+      <h3>Create member</h3>
+      <p class="muted">Create the membership profile for an existing Keycloak user. This form does not create a Keycloak account.</p>
+      <div class="form-grid">
+        <label>Keycloak user UUID<input formControlName="keycloakUserId" required></label>
+        <label>First name<input formControlName="firstName" required></label>
+        <label>Last name<input formControlName="lastName" required></label>
+        <label>Email<input type="email" formControlName="email" required></label>
+        <label>Phone<input formControlName="phone"></label>
+        <label>Birth date<input type="date" formControlName="birthDate"></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="memberCreateForm.invalid || loading">Create member</button>
+    </form>
+
+    <form *ngIf="selectedMember" [formGroup]="memberEditForm" (ngSubmit)="saveMember()" class="account-card workspace-card">
+      <div class="section-heading"><div><p class="eyebrow">PROFILE</p><h3>{{ selectedMember.firstName }} {{ selectedMember.lastName }}</h3></div>
+        <button class="button quiet compact" type="button" (click)="selectedMember = null">Close</button>
+      </div>
+      <div class="form-grid">
+        <label *ngIf="isAdmin">First name<input formControlName="firstName" required></label>
+        <label *ngIf="isAdmin">Last name<input formControlName="lastName" required></label>
+        <label>Email<input type="email" formControlName="email" required></label>
+        <label *ngIf="isAdmin">Phone<input formControlName="phone"></label>
+        <label *ngIf="isAdmin">Birth date<input type="date" formControlName="birthDate"></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="memberEditForm.invalid || loading">Save profile</button>
+    </form>
+  </section>
+
+  <section *ngIf="activeTab === 'profile'" class="workspace-section">
+    <div *ngIf="members[0] as profile" class="account-card workspace-card">
+      <p class="eyebrow">MEMBER PROFILE</p><h2>{{ profile.firstName }} {{ profile.lastName }}</h2>
+      <p>{{ profile.email }} <span *ngIf="profile.phone">· {{ profile.phone }}</span></p>
+      <p>Status: <span class="status-pill">{{ profile.status }}</span></p>
+      <button class="button quiet" type="button" (click)="selectMember(profile)">Edit my contact details</button>
+    </div>
+    <p *ngIf="members.length === 0 && !loading" class="empty-state">No member profile is linked to this account.</p>
+  </section>
+
+  <section *ngIf="activeTab === 'subscriptions'" class="workspace-section">
+    <div class="section-heading"><div><p class="eyebrow">MEMBERSHIP TERMS</p><h2>Subscriptions & plans</h2></div></div>
+    <form *ngIf="isAdmin" [formGroup]="subscriptionCreateForm" (ngSubmit)="createSubscription()" class="account-card workspace-card">
+      <h3>Create subscription</h3>
+      <div class="form-grid">
+        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }} · {{ member.status }}</option></select></label>
+        <label>Active plan<select formControlName="planId" required><option value="">Choose plan</option><option *ngFor="let plan of plans" [value]="plan.id">{{ plan.name }} · {{ formatMoney(plan.priceCents, plan.currency) }}</option></select></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="subscriptionCreateForm.invalid || loading">Create subscription</button>
+      <p class="muted">A member may have only one active subscription. Renew after the current subscription expires.</p>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Plan</th><th>Start</th><th>End</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let subscription of subscriptions">
+            <td>{{ memberName(subscription.memberId) }}</td><td>{{ planName(subscription.planId) }}</td>
+            <td>{{ subscription.startsAt | date:'mediumDate':'UTC' }}</td><td>{{ subscription.endsAt | date:'mediumDate':'UTC' }}</td>
+            <td><span class="status-pill">{{ subscription.status }}</span></td>
+            <td><button *ngIf="isAdmin && subscription.status === 'ACTIVE'" class="button quiet compact" type="button" (click)="chooseSubscriptionPlan(subscription)">Change plan / cancel</button></td>
+          </tr>
+          <tr *ngIf="subscriptions.length === 0"><td colspan="6" class="empty-state">No subscriptions found.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div *ngIf="selectedSubscription" class="account-card workspace-card">
+      <h3>Update {{ planName(selectedSubscription.planId) }}</h3>
+      <form [formGroup]="subscriptionPlanForm" (ngSubmit)="changeSubscriptionPlan()" class="inline-form">
+        <label>New plan<select formControlName="planId"><option *ngFor="let plan of plans" [value]="plan.id">{{ plan.name }}</option></select></label>
+        <button class="button quiet" type="submit" [disabled]="subscriptionPlanForm.invalid || loading">Change plan</button>
+      </form>
+      <form [formGroup]="cancelForm" (ngSubmit)="cancelSubscription(selectedSubscription)" class="inline-form">
+        <label>Cancellation reason<input formControlName="reason" required></label>
+        <button class="button quiet" type="submit" [disabled]="cancelForm.invalid || loading">Cancel subscription</button>
+      </form>
+    </div>
+    <form *ngIf="isAdmin" [formGroup]="planCreateForm" (ngSubmit)="createPlan()" class="account-card workspace-card">
+      <h3>Create plan</h3>
+      <div class="form-grid">
+        <label>Code<input formControlName="code" required></label><label>Name<input formControlName="name" required></label>
+        <label>Duration (days)<input type="number" min="1" formControlName="durationDays" required></label>
+        <label>Price (cents)<input type="number" min="0" formControlName="priceCents" required></label>
+        <label>Currency<input formControlName="currency" required></label>
+        <label class="wide-field">Conditions<textarea rows="3" formControlName="conditions" required></textarea></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="planCreateForm.invalid || loading">Create plan</button>
+    </form>
+    <div *ngIf="isAdmin" class="plan-list">
+      <button *ngFor="let plan of plans" type="button" class="plan-chip" (click)="selectPlan(plan)">
+        {{ plan.name }} · {{ formatMoney(plan.priceCents, plan.currency) }} · {{ plan.active ? 'ACTIVE' : 'INACTIVE' }}
+      </button>
+    </div>
+    <form *ngIf="selectedPlan && isAdmin" [formGroup]="planEditForm" (ngSubmit)="savePlan()" class="account-card workspace-card">
+      <h3>Edit plan: {{ selectedPlan.name }}</h3>
+      <div class="form-grid">
+        <label>Name<input formControlName="name" required></label>
+        <label>Duration (days)<input type="number" min="1" formControlName="durationDays" required></label>
+        <label>Price (cents)<input type="number" min="0" formControlName="priceCents" required></label>
+        <label>Currency<input formControlName="currency" required></label>
+        <label class="wide-field">Conditions<textarea rows="3" formControlName="conditions" required></textarea></label>
+        <label class="checkbox-field"><input type="checkbox" formControlName="active"> Plan active</label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="planEditForm.invalid || loading">Save plan</button>
+      <button class="button quiet" type="button" (click)="selectedPlan = null">Close</button>
+    </form>
+  </section>
+
+  <section *ngIf="activeTab === 'payments'" class="workspace-section">
+    <div class="section-heading"><div><p class="eyebrow">FINANCIAL HISTORY</p><h2>Payments</h2></div>
+      <p *ngIf="isMember && totalPaidCents !== null" class="total-paid">Total recorded: {{ totalPaidCents }} cents</p>
+    </div>
+    <form *ngIf="isAdmin" [formGroup]="paymentCreateForm" (ngSubmit)="createPayment()" class="account-card workspace-card">
+      <h3>Record payment</h3>
+      <div class="form-grid">
+        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }}</option></select></label>
+        <label>Subscription ID (optional)<input formControlName="subscriptionId"></label>
+        <label>Amount (cents)<input type="number" min="1" formControlName="amountCents" required></label>
+        <label>Currency<input formControlName="currency" required></label>
+        <label>Method<select formControlName="method"><option value="CASH">Cash</option><option value="CARD">Card</option><option value="TRANSFER">Transfer</option></select></label>
+        <label>Paid at<input type="datetime-local" formControlName="paidAt"></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="paymentCreateForm.invalid || loading">Record payment</button>
+    </form>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Amount</th><th>Date</th><th>Method</th><th>Status / corrections</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let payment of payments">
+            <td>{{ memberName(payment.memberId) }}</td><td>{{ formatMoney(payment.amountCents, payment.currency) }}</td>
+            <td>{{ payment.paidAt | date:'medium':'UTC' }}</td><td>{{ payment.method }}</td>
+            <td><span class="status-pill">{{ payment.status }}</span>
+              <ul *ngIf="payment.corrections.length"><li *ngFor="let correction of payment.corrections">{{ formatMoney(correction.amountCents, correction.currency) }} — {{ correction.reason }}</li></ul>
+            </td>
+            <td><button *ngIf="isAdmin && payment.status === 'RECORDED'" class="button quiet compact" type="button" (click)="choosePayment(payment)">Correct</button></td>
+          </tr>
+          <tr *ngIf="payments.length === 0"><td colspan="6" class="empty-state">No payments found.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <form *ngIf="selectedPayment" [formGroup]="paymentCorrectionForm" (ngSubmit)="correctPayment()" class="account-card workspace-card">
+      <h3>Correct payment {{ selectedPayment.id }}</h3>
+      <p class="muted">The original entry is immutable. A linked correction entry will preserve its date, currency, and method.</p>
+      <div class="form-grid"><label>Corrected amount (cents)<input type="number" min="1" formControlName="amountCents" required></label><label>Reason<input formControlName="reason" required></label></div>
+      <button class="button primary" type="submit" [disabled]="paymentCorrectionForm.invalid || loading">Save correction</button>
+      <button class="button quiet" type="button" (click)="selectedPayment = null">Close</button>
+    </form>
+  </section>
+
+  <section *ngIf="activeTab === 'employees' && isAdmin" class="workspace-section">
+    <div class="section-heading"><div><p class="eyebrow">STAFF</p><h2>Employees & coach assignments</h2></div></div>
+    <form [formGroup]="employeeCreateForm" (ngSubmit)="createEmployee()" class="account-card workspace-card">
+      <h3>Create employee</h3>
+      <p class="muted">The Keycloak account must already exist; this only creates its membership-service profile.</p>
+      <div class="form-grid">
+        <label>Keycloak user UUID<input formControlName="keycloakUserId" required></label>
+        <label>First name<input formControlName="firstName" required></label><label>Last name<input formControlName="lastName" required></label>
+        <label>Email<input type="email" formControlName="email" required></label><label>Job title<input formControlName="jobTitle" required></label>
+        <label>Hire date<input type="date" formControlName="hireDate"></label>
+      </div>
+      <button class="button primary" type="submit" [disabled]="employeeCreateForm.invalid || loading">Create employee</button>
+    </form>
+    <div class="table-wrap">
+      <table><thead><tr><th>Name</th><th>Title</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody><tr *ngFor="let employee of employees">
+          <td><button class="table-link" type="button" (click)="selectEmployee(employee)">{{ employee.firstName }} {{ employee.lastName }}</button></td>
+          <td>{{ employee.jobTitle }}</td><td>{{ employee.email }}</td><td><span class="status-pill">{{ employee.status }}</span></td>
+          <td class="row-actions"><button class="button quiet compact" type="button" (click)="selectEmployee(employee)">Manage</button>
+            <button *ngIf="employee.status === 'ACTIVE'" class="button quiet compact" type="button" (click)="deactivateEmployee(employee)">Deactivate</button></td>
+        </tr><tr *ngIf="employees.length === 0"><td colspan="5" class="empty-state">No employees found.</td></tr></tbody>
+      </table>
+    </div>
+    <section *ngIf="selectedEmployee" class="account-card workspace-card">
+      <h3>{{ selectedEmployee.firstName }} {{ selectedEmployee.lastName }}</h3>
+      <form [formGroup]="employeeEditForm" (ngSubmit)="saveEmployee()">
+        <div class="form-grid"><label>First name<input formControlName="firstName" required></label><label>Last name<input formControlName="lastName" required></label>
+          <label>Email<input type="email" formControlName="email" required></label><label>Job title<input formControlName="jobTitle" required></label>
+          <label>Hire date<input type="date" formControlName="hireDate"></label></div>
+        <button class="button primary" type="submit" [disabled]="employeeEditForm.invalid || loading">Save employee</button>
+      </form>
+      <h3 class="subheading">Assigned members</h3>
+      <form [formGroup]="assignmentForm" (ngSubmit)="assignMember()" class="inline-form">
+        <label>Member<select formControlName="memberId"><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }}</option></select></label>
+        <button class="button quiet" type="submit" [disabled]="assignmentForm.invalid || loading">Assign member</button>
+      </form>
+      <ul class="assigned-list"><li *ngFor="let member of assignedMembers">{{ member.firstName }} {{ member.lastName }} · {{ member.email }}
+        <button class="button quiet compact" type="button" (click)="unassignMember(member)">End assignment</button></li>
+        <li *ngIf="assignedMembers.length === 0" class="muted">No active assignments.</li></ul>
+    </section>
+  </section>
+
+  <section *ngIf="activeTab === 'assistant' && isAdmin" class="workspace-section">
+    <div class="section-heading"><div><p class="eyebrow">ADMINISTRATIVE ASSISTANT</p><h2>Policies & renewal reminders</h2></div></div>
+    <form [formGroup]="explainForm" (ngSubmit)="askAssistant()" class="account-card workspace-card">
+      <h3>Explain plan conditions</h3>
+      <div class="form-grid"><label>Plan (optional)<select formControlName="planId"><option value="">Validated policies only</option><option *ngFor="let plan of plans" [value]="plan.id">{{ plan.name }}</option></select></label>
+        <label class="wide-field">Question<textarea rows="3" formControlName="question" required></textarea></label></div>
+      <button class="button primary" type="submit" [disabled]="explainForm.invalid || loading">Ask</button>
+      <p *ngIf="assistantAnswer" class="assistant-answer" aria-live="polite">{{ assistantAnswer }}</p>
+    </form>
+    <form [formGroup]="renewalForm" (ngSubmit)="summarizeRenewals()" class="account-card workspace-card">
+      <h3>Upcoming renewals</h3>
+      <div class="inline-form"><label>Days ahead<input type="number" min="1" max="365" formControlName="days"></label><button class="button primary" type="submit" [disabled]="renewalForm.invalid || loading">Summarize</button></div>
+      <p *ngIf="renewalsAnswer" class="assistant-answer" aria-live="polite">{{ renewalsAnswer }}</p>
+    </form>
+    <form [formGroup]="reminderCreateForm" (ngSubmit)="createReminder()" class="account-card workspace-card">
+      <h3>Generate reminder draft</h3>
+      <label>Subscription<select formControlName="subscriptionId" required><option value="">Choose active subscription</option><option *ngFor="let subscription of subscriptions" [value]="subscription.id" [disabled]="subscription.status !== 'ACTIVE'">{{ memberName(subscription.memberId) }} — {{ planName(subscription.planId) }} — {{ subscription.status }}</option></select></label>
+      <button class="button primary" type="submit" [disabled]="reminderCreateForm.invalid || loading">Generate draft</button>
+    </form>
+    <form *ngIf="reminder" [formGroup]="reminderEditForm" (ngSubmit)="saveReminder()" class="account-card workspace-card">
+      <div class="section-heading"><div><p class="eyebrow">REMINDER {{ reminder.status }}</p><h3>Edit before sending</h3></div></div>
+      <label>Subject<input formControlName="subject" required></label>
+      <label>Message<textarea rows="6" formControlName="body" required></textarea></label>
+      <p class="muted">Recipient email is looked up by the API only when you confirm. Review any [À COMPLÉTER] placeholders.</p>
+      <button class="button quiet" type="submit" [disabled]="reminder.status !== 'DRAFT' || reminderEditForm.invalid || loading">Save draft</button>
+      <button class="button primary" type="button" [disabled]="reminder.status !== 'DRAFT' || loading" (click)="confirmReminder()">Confirm & send</button>
+      <button class="button quiet" type="button" [disabled]="reminder.status !== 'DRAFT' || loading" (click)="rejectReminder()">Reject</button>
+    </form>
+  </section>
+</main>

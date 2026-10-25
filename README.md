@@ -272,6 +272,11 @@ exactly `http://localhost:8088`.
   phone numbers, member IDs, or Keycloak IDs. Generated reminder dates and
   amounts are checked against database facts; invalid or incomplete output
   becomes an editable draft marked `[À COMPLÉTER]`.
+- The `/membership` Angular workspace provides role-aware member, subscription,
+  payment, employee/assignment, assistant, and member-profile screens with
+  reactive forms, loading/empty/error states, and server-side authorization.
+  Member search includes pagination; navigation visibility is only a UX aid,
+  not an authorization boundary.
 - Membership, employee, subscription, and payment changes publish the event
   types documented in [docs/events.md](docs/events.md) to RabbitMQ after
   commit. Delivery is best effort; failed broker publication is logged and is
@@ -331,8 +336,9 @@ The delivered scope includes the Keycloak-backed authentication and
 authorization vertical slice, member and employee CRUD, coach assignments,
 subscription plans and subscriptions, payments with traceable corrections,
 post-commit RabbitMQ events, and the administrative assistant and reminder
-confirmation flow. The Angular module pages remain placeholders. Business
-features for the other modules are not delivered.
+confirmation flow. The `/membership` Angular screens are delivered; the SPA
+pages for the other modules remain placeholders. Business features for the
+other modules are not delivered.
 
 The following are not yet delivered:
 
@@ -344,7 +350,8 @@ Development sample plans and policies are loaded only by the `dev` profile.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
 payment deletion-guard tests. Testcontainers cases are skipped when Docker
-is unavailable. There are no Angular E2E tests in the repository.
+is unavailable. Angular unit tests cover membership API requests and route
+guards. There are no Angular E2E tests in the repository.
 
 Run the backend tests from the `backend` directory:
 
@@ -353,6 +360,13 @@ mvn -B test
 ```
 
 Docker Desktop must be running for the Testcontainers PostgreSQL tests.
+
+Run the frontend checks from the repository root:
+
+```powershell
+npm --prefix frontend test
+npm --prefix frontend run build
+```
 
 ## Troubleshooting
 
