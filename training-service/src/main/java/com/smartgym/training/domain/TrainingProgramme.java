@@ -160,6 +160,21 @@ public class TrainingProgramme {
         });
     }
 
+    public void addSession(ProgrammeSession session) {
+        session.attachTo(this);
+        sessions.add(session);
+    }
+
+    public void removeSession(ProgrammeSession session) {
+        sessions.remove(session);
+    }
+
+    public void recordContentChange() {
+        revision++;
+        approvedRevision = null;
+        status = ProgrammeStatus.DRAFT;
+    }
+
     public void submitForReview() {
         status = ProgrammeStatus.PENDING_REVIEW;
     }

@@ -1,6 +1,7 @@
 package com.smartgym.training.application;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -14,9 +15,12 @@ import com.smartgym.training.domain.ProgrammeStatus;
 import com.smartgym.training.domain.ReviewDecision;
 import com.smartgym.training.domain.TrainingProgramme;
 import com.smartgym.training.dto.ProgrammeItemRequest;
+import com.smartgym.training.dto.ProgrammeItemChangeRequest;
+import com.smartgym.training.dto.ProgrammeOrderRequest;
 import com.smartgym.training.dto.ProgrammeRequest;
 import com.smartgym.training.dto.ProgrammeResponse;
 import com.smartgym.training.dto.ProgrammeReviewRequest;
+import com.smartgym.training.dto.ProgrammeSessionChangeRequest;
 import com.smartgym.training.dto.ProgrammeSessionRequest;
 import com.smartgym.training.integration.MembershipClient;
 import com.smartgym.training.repository.ExerciseRepository;
@@ -239,6 +243,203 @@ public class ProgrammeService {
         return ProgrammeResponse.from(programmes.save(draft), true);
     }
 
+    public ProgrammeResponse addSession(Jwt jwt, UUID id, ProgrammeSessionChangeRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        if (programme.getSessions().size() >= 14) {
+            throw invalid("A programme may contain at most 14 sessions.");
+        }
+        validateExercisesAndItems(List.of(request.session()));
+        ProgrammeSession session = createSessions(List.of(request.session())).get(0);
+        session.setDayOrder(programme.getSessions().size() + 1);
+        programme.addSession(session);
+        return finishStructureMutation(programme);
+    }
+
+    public ProgrammeResponse updateSession(
+            Jwt jwt, UUID id, UUID sessionId, ProgrammeSessionChangeRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        ProgrammeSession session = findSession(programme, sessionId);
+        if (session.getItems().size() >= 20) {
+            throw invalid("A session may contain at most 20 exercise items.");
+        }
+        validateExercisesAndItems(List.of(request.session()));
+        session.update(request.session().title().trim(), trimToNull(request.session().notes()));
+        session.clearItems();
+        entityManager.flush();
+        session.addItems(createItems(request.session().items()));
+        return finishStructureMutation(programme);
+    }
+
+    public void deleteSession(Jwt jwt, UUID id, UUID sessionId, long version) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, version);
+        programme.removeSession(findSession(programme, sessionId));
+        entityManager.flush();
+        reorderProgrammeSessions(programme);
+        finishStructureMutation(programme);
+    }
+
+    public ProgrammeResponse reorderSessions(Jwt jwt, UUID id, ProgrammeOrderRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        List<ProgrammeSession> current = programme.getSessions().stream()
+                .sorted(java.util.Comparator.comparingInt(ProgrammeSession::getDayOrder))
+                .toList();
+        List<UUID> currentIds = current.stream().map(ProgrammeSession::getId).toList();
+        requireExactOrder(currentIds, request.orderedIds(), "sessions");
+        for (ProgrammeSession session : current) session.setDayOrder(session.getDayOrder() + 1000);
+        entityManager.flush();
+        for (int index = 0; index < request.orderedIds().size(); index++) {
+            findSession(programme, request.orderedIds().get(index)).setDayOrder(index + 1);
+        }
+        return finishStructureMutation(programme);
+    }
+
+    public ProgrammeResponse addItem(
+            Jwt jwt, UUID id, UUID sessionId, ProgrammeItemChangeRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        ProgrammeSession session = findSession(programme, sessionId);
+        validateExercisesAndItems(List.of(new ProgrammeSessionRequest("Validation", null, List.of(request.item()))));
+        session.addItem(createItems(List.of(request.item())).get(0));
+        session.getItems().get(session.getItems().size() - 1).setOrderIndex(session.getItems().size());
+        return finishStructureMutation(programme);
+    }
+
+    public ProgrammeResponse updateItem(
+            Jwt jwt,
+            UUID id,
+            UUID sessionId,
+            UUID itemId,
+            ProgrammeItemChangeRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        ProgrammeSession session = findSession(programme, sessionId);
+        ProgrammeItem item = findItem(session, itemId);
+        validateExercisesAndItems(List.of(new ProgrammeSessionRequest("Validation", null, List.of(request.item()))));
+        updateItem(item, request.item());
+        return finishStructureMutation(programme);
+    }
+
+    public void deleteItem(Jwt jwt, UUID id, UUID sessionId, UUID itemId, long version) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, version);
+        ProgrammeSession session = findSession(programme, sessionId);
+        session.removeItem(findItem(session, itemId));
+        entityManager.flush();
+        reorderSessionItems(session);
+        finishStructureMutation(programme);
+    }
+
+    public ProgrammeResponse reorderItems(
+            Jwt jwt, UUID id, UUID sessionId, ProgrammeOrderRequest request) {
+        TrainingProgramme programme = find(id);
+        authorizeStructureMutation(jwt, programme, request.version());
+        ProgrammeSession session = findSession(programme, sessionId);
+        List<ProgrammeItem> current = session.getItems().stream()
+                .sorted(java.util.Comparator.comparingInt(ProgrammeItem::getOrderIndex))
+                .toList();
+        List<UUID> currentIds = current.stream().map(ProgrammeItem::getId).toList();
+        requireExactOrder(currentIds, request.orderedIds(), "items");
+        for (ProgrammeItem item : current) item.setOrderIndex(item.getOrderIndex() + 1000);
+        entityManager.flush();
+        for (int index = 0; index < request.orderedIds().size(); index++) {
+            findItem(session, request.orderedIds().get(index)).setOrderIndex(index + 1);
+        }
+        return finishStructureMutation(programme);
+    }
+
+    private void authorizeStructureMutation(Jwt jwt, TrainingProgramme programme, Long version) {
+        requireRole(jwt, "COACH");
+        requireAssignment(jwt, programme.getMemberId());
+        if (programme.getStatus() == ProgrammeStatus.PUBLISHED
+                || programme.getStatus() == ProgrammeStatus.ARCHIVED
+                || programme.getStatus() == ProgrammeStatus.PENDING_REVIEW) {
+            throw conflict("This programme cannot be edited in its current state.");
+        }
+        if (version == null || version < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Programme version is required for updates.");
+        }
+        if (version != programme.getVersion()) {
+            throw conflict("This programme changed. Reload it before saving.");
+        }
+    }
+
+    private ProgrammeResponse finishStructureMutation(TrainingProgramme programme) {
+        programme.recordContentChange();
+        return save(programme);
+    }
+
+    private void reorderProgrammeSessions(TrainingProgramme programme) {
+        List<ProgrammeSession> current = programme.getSessions().stream()
+                .sorted(java.util.Comparator.comparingInt(ProgrammeSession::getDayOrder))
+                .toList();
+        for (ProgrammeSession session : current) session.setDayOrder(session.getDayOrder() + 1000);
+        entityManager.flush();
+        for (int index = 0; index < current.size(); index++) current.get(index).setDayOrder(index + 1);
+    }
+
+    private void reorderSessionItems(ProgrammeSession session) {
+        List<ProgrammeItem> current = session.getItems().stream()
+                .sorted(java.util.Comparator.comparingInt(ProgrammeItem::getOrderIndex))
+                .toList();
+        for (ProgrammeItem item : current) item.setOrderIndex(item.getOrderIndex() + 1000);
+        entityManager.flush();
+        for (int index = 0; index < current.size(); index++) current.get(index).setOrderIndex(index + 1);
+    }
+
+    private static List<ProgrammeItem> createItems(List<ProgrammeItemRequest> requests) {
+        List<ProgrammeItem> items = new ArrayList<>();
+        for (int index = 0; index < requests.size(); index++) {
+            ProgrammeItemRequest request = requests.get(index);
+            items.add(new ProgrammeItem(
+                    request.exerciseId(),
+                    index + 1,
+                    request.sets(),
+                    request.repetitions(),
+                    request.durationSeconds(),
+                    request.restSeconds(),
+                    request.suggestedLoadKg(),
+                    trimToNull(request.notes())));
+        }
+        return items;
+    }
+
+    private static void updateItem(ProgrammeItem item, ProgrammeItemRequest request) {
+        item.update(
+                request.exerciseId(),
+                request.sets(),
+                request.repetitions(),
+                request.durationSeconds(),
+                request.restSeconds(),
+                request.suggestedLoadKg(),
+                trimToNull(request.notes()));
+    }
+
+    private static ProgrammeSession findSession(TrainingProgramme programme, UUID sessionId) {
+        return programme.getSessions().stream()
+                .filter(session -> session.getId().equals(sessionId))
+                .findFirst()
+                .orElseThrow(() -> notFound("Programme session not found."));
+    }
+
+    private static ProgrammeItem findItem(ProgrammeSession session, UUID itemId) {
+        return session.getItems().stream()
+                .filter(item -> item.getId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> notFound("Programme item not found in this session."));
+    }
+
+    private static void requireExactOrder(List<UUID> current, List<UUID> requested, String resource) {
+        if (current.size() != requested.size()
+                || new HashSet<>(requested).size() != requested.size()
+                || !new HashSet<>(current).equals(new HashSet<>(requested))) {
+            throw invalid("The requested order must contain every existing " + resource + " exactly once.");
+        }
+    }
+
     private ProgrammeResponse save(TrainingProgramme programme) {
         try {
             return ProgrammeResponse.from(programmes.saveAndFlush(programme), true);
@@ -318,6 +519,10 @@ public class ProgrammeService {
     private TrainingProgramme find(UUID id) {
         return programmes.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Programme not found."));
+    }
+
+    private static ResponseStatusException notFound(String message) {
+        return new ResponseStatusException(HttpStatus.NOT_FOUND, message);
     }
 
     private static UUID requireProfile(UUID profileId, String type) {

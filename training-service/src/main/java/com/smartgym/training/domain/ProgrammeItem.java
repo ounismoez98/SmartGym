@@ -72,6 +72,27 @@ public class ProgrammeItem {
         this.session = session;
     }
 
+    public void update(
+            UUID exerciseId,
+            int sets,
+            Integer repetitions,
+            Integer durationSeconds,
+            int restSeconds,
+            BigDecimal suggestedLoadKg,
+            String notes) {
+        this.exerciseId = exerciseId;
+        this.sets = sets;
+        this.repetitions = repetitions;
+        this.durationSeconds = durationSeconds;
+        this.restSeconds = restSeconds;
+        this.suggestedLoadKg = suggestedLoadKg;
+        this.notes = notes;
+    }
+
+    public void setOrderIndex(int orderIndex) {
+        this.orderIndex = orderIndex;
+    }
+
     public UUID getId() { return id; }
     public UUID getExerciseId() { return exerciseId; }
     public int getOrderIndex() { return orderIndex; }

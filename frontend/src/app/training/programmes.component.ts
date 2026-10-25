@@ -1,11 +1,35 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormArray, FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { MembershipApiService, AssignedMember } from '../membership-api.service';
 import { AuthService } from '../auth.service';
 import { Exercise } from './training-api.service';
-import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './training-workflows-api.service';
+import {
+  Programme,
+  ProgrammeInput,
+  ProgrammeItemInput,
+  ProgrammeSessionInput,
+  ProgrammeStatus,
+  TrainingWorkflowsApiService
+} from './training-workflows-api.service';
+
+type PrescriptionType = 'REPETITIONS' | 'DURATION';
+type ItemForm = FormGroup<{
+  exerciseId: FormControl<string>;
+  prescriptionType: FormControl<PrescriptionType>;
+  sets: FormControl<number>;
+  repetitions: FormControl<number | null>;
+  durationSeconds: FormControl<number | null>;
+  restSeconds: FormControl<number>;
+  suggestedLoadKg: FormControl<number | null>;
+  notes: FormControl<string>;
+}>;
+type SessionForm = FormGroup<{
+  title: FormControl<string>;
+  notes: FormControl<string>;
+  items: FormArray<ItemForm>;
+}>;
 
 @Component({
   standalone: true,
@@ -15,13 +39,13 @@ import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './traini
       <a class="back-link" routerLink="/training">← Exercise catalogue</a>
       <p class="eyebrow">M3 · PROGRAMMES</p>
       <h1>Training programmes</h1>
-      <p class="lead">Coach-created plans remain drafts until reviewed and explicitly published.</p>
+      <p class="lead">Build ordered sessions and exercise prescriptions. Coach-created plans remain drafts until reviewed and explicitly published.</p>
       @if (error()) { <div class="notice error" role="alert">{{ error() }}</div> }
       @if (notice()) { <div class="notice" role="status">{{ notice() }}</div> }
 
       @if (isCoach) {
         <section class="account-card">
-          <h2>{{ editing() ? 'Edit draft' : 'Create a programme draft' }}</h2>
+          <h2>{{ editing() ? 'Edit programme draft' : 'Create a programme draft' }}</h2>
           @if (membersLoading()) { <p>Loading your assigned members…</p> }
           <form [formGroup]="form" (ngSubmit)="save()">
             <div class="form-grid">
@@ -44,25 +68,72 @@ import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './traini
               </label>
               <label>Duration (weeks) <input type="number" min="1" max="52" formControlName="durationWeeks"></label>
             </div>
-            <h3>First session</h3>
-            <div class="form-grid">
-              <label>Session title <input formControlName="sessionTitle" maxlength="120"></label>
-              <label>Exercise
-                <select formControlName="exerciseId">
-                  <option value="">Select an active exercise</option>
-                  @for (exercise of exercises(); track exercise.id) {
-                    <option [value]="exercise.id">{{ exercise.name }} · {{ exercise.primaryMuscleGroup }}</option>
-                  }
-                </select>
-              </label>
-              <label>Sets <input type="number" min="1" max="20" formControlName="sets"></label>
-              <label>Repetitions <input type="number" min="1" max="100" formControlName="repetitions"></label>
-              <label>Rest (seconds) <input type="number" min="0" max="3600" formControlName="restSeconds"></label>
+
+            <div formArrayName="sessions">
+              @for (session of sessions.controls; track session; let sessionIndex = $index) {
+                <section class="session-editor" [formGroupName]="sessionIndex">
+                  <div class="editor-heading">
+                    <h3>Session {{ sessionIndex + 1 }}</h3>
+                    <div class="actions">
+                      <button class="button quiet" type="button" [disabled]="sessionIndex === 0" (click)="moveSession(sessionIndex, -1)">Move up</button>
+                      <button class="button quiet" type="button" [disabled]="sessionIndex === sessions.length - 1" (click)="moveSession(sessionIndex, 1)">Move down</button>
+                      <button class="button quiet" type="button" [disabled]="sessions.length === 1" (click)="removeSession(sessionIndex)">Remove session</button>
+                    </div>
+                  </div>
+                  <div class="form-grid">
+                    <label>Session title <input formControlName="title" maxlength="120"></label>
+                    <label>Session notes <input formControlName="notes" maxlength="1000"></label>
+                  </div>
+                  <div formArrayName="items">
+                    @for (item of session.controls.items.controls; track item; let itemIndex = $index) {
+                      <div class="item-editor" [formGroupName]="itemIndex">
+                        <div class="editor-heading">
+                          <h4>Exercise {{ itemIndex + 1 }}</h4>
+                          <div class="actions">
+                            <button class="button quiet" type="button" [disabled]="itemIndex === 0" (click)="moveItem(session, itemIndex, -1)">Move up</button>
+                            <button class="button quiet" type="button" [disabled]="itemIndex === session.controls.items.length - 1" (click)="moveItem(session, itemIndex, 1)">Move down</button>
+                            <button class="button quiet" type="button" [disabled]="session.controls.items.length === 1" (click)="removeItem(session, itemIndex)">Remove</button>
+                          </div>
+                        </div>
+                        <div class="form-grid">
+                          <label>Exercise
+                            <select formControlName="exerciseId">
+                              <option value="">Select an active exercise</option>
+                              @for (exercise of exercises(); track exercise.id) {
+                                <option [value]="exercise.id">{{ exercise.name }} · {{ exercise.primaryMuscleGroup }}</option>
+                              }
+                            </select>
+                          </label>
+                          <label>Sets <input type="number" min="1" max="20" formControlName="sets"></label>
+                          <label>Prescription
+                            <select formControlName="prescriptionType" (change)="setPrescriptionType(item, $event)">
+                              <option value="REPETITIONS">Repetitions</option>
+                              <option value="DURATION">Duration</option>
+                            </select>
+                          </label>
+                          @if (item.controls.prescriptionType.value === 'REPETITIONS') {
+                            <label>Repetitions <input type="number" min="1" max="100" formControlName="repetitions"></label>
+                          } @else {
+                            <label>Duration (seconds) <input type="number" min="1" max="7200" formControlName="durationSeconds"></label>
+                          }
+                          <label>Rest (seconds) <input type="number" min="0" max="3600" formControlName="restSeconds"></label>
+                          <label>Suggested load (kg, optional) <input type="number" min="0.01" step="0.01" formControlName="suggestedLoadKg"></label>
+                          <label>Exercise notes <input formControlName="notes" maxlength="500"></label>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                  <button class="button quiet" type="button" [disabled]="session.controls.items.length >= 20" (click)="addItem(session)">Add exercise</button>
+                </section>
+              }
             </div>
-            <button class="button primary" type="submit" [disabled]="saving()">
-              {{ saving() ? 'Saving…' : editing() ? 'Save draft changes' : 'Create draft' }}
-            </button>
-            @if (editing()) { <button class="button quiet" type="button" (click)="cancelEdit()">Cancel</button> }
+            <button class="button quiet" type="button" [disabled]="sessions.length >= 14" (click)="addSession()">Add session</button>
+            <div class="form-actions">
+              <button class="button primary" type="submit" [disabled]="saving() || exercises().length === 0">
+                {{ saving() ? 'Saving…' : editing() ? 'Save draft changes' : 'Create draft' }}
+              </button>
+              @if (editing()) { <button class="button quiet" type="button" (click)="cancelEdit()">Cancel</button> }
+            </div>
           </form>
           @if (exercises().length === 0) { <p class="muted">Add an active exercise before creating a programme.</p> }
         </section>
@@ -70,6 +141,19 @@ import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './traini
 
       <section class="programme-list">
         <div class="section-heading"><h2>{{ isCoach ? 'Assigned-member programmes' : 'Your published programmes' }}</h2>
+          @if (isCoach) {
+            <label>Status
+              <select [value]="statusFilter()" (change)="setStatusFilter($event)">
+                <option value="">All statuses</option>
+                <option value="DRAFT">Draft</option>
+                <option value="PENDING_REVIEW">Pending review</option>
+                <option value="CHANGES_REQUESTED">Changes requested</option>
+                <option value="APPROVED">Approved</option>
+                <option value="PUBLISHED">Published</option>
+                <option value="ARCHIVED">Archived</option>
+              </select>
+            </label>
+          }
           <button class="button quiet" type="button" (click)="load()">Refresh</button></div>
         @if (loading()) { <div class="account-card">Loading programmes…</div> }
         @else if (programmes().length === 0) { <div class="account-card muted">No programmes to show yet.</div> }
@@ -85,18 +169,24 @@ import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './traini
               @for (session of programme.sessions; track session.id) {
                 <details>
                   <summary>{{ session.dayOrder }}. {{ session.title }}</summary>
-                  <ul>@for (item of session.items; track item.id) {
+                  @if (session.notes) { <p>{{ session.notes }}</p> }
+                  <ol>@for (item of session.items; track item.id) {
                     <li>{{ exerciseName(item.exerciseId) }} — {{ item.sets }} ×
-                      {{ item.repetitions ?? (item.durationSeconds + ' sec') }}</li>
-                  }</ul>
+                      {{ item.repetitions ?? (item.durationSeconds + ' sec') }}
+                      @if (item.suggestedLoadKg !== null) { · {{ item.suggestedLoadKg }} kg }
+                      @if (item.notes) { · {{ item.notes }} }
+                    </li>
+                  }</ol>
+                  @if (!isCoach && programme.status === 'PUBLISHED') {
+                    <a class="button primary" [routerLink]="['/training/workouts']"
+                      [queryParams]="{ programmeId: programme.id, programmeSessionId: session.id }">Log this session</a>
+                  }
                 </details>
               }
               @if (isCoach) {
                 <div class="actions">
                   @if (programme.status === 'DRAFT' || programme.status === 'CHANGES_REQUESTED') {
-                    @if (programme.sessions.length === 1 && programme.sessions[0].items.length === 1) {
-                      <button class="button quiet" type="button" (click)="edit(programme)">Edit draft</button>
-                    }
+                    <button class="button quiet" type="button" (click)="edit(programme)">Edit draft</button>
                     <button class="button primary" type="button" (click)="submit(programme)">Submit for review</button>
                   }
                   @if (programme.status === 'PENDING_REVIEW') {
@@ -131,18 +221,24 @@ import { Programme, ProgrammeInput, TrainingWorkflowsApiService } from './traini
     .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 18px 0; }
     label { display: grid; gap: 7px; color: var(--muted); font-size: .9rem; }
     input, select { min-height: 42px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; color: #eef4ee; background: #101a15; font: inherit; }
+    .session-editor { margin: 22px 0; padding: 18px; border: 1px solid var(--border); border-radius: 12px; }
+    .item-editor { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; }
+    .editor-heading, .programme-header, .section-heading, .actions, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .programme-list { margin-top: 36px; }
     .programme-card { margin: 14px 0; }
-    .programme-header, .section-heading, .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .programme-header h3 { margin-bottom: 6px; }
     .programme-header p:last-child { color: var(--muted); }
     .tag { padding: 5px 10px; border-radius: 999px; color: var(--accent); background: rgb(163 230 53 / 10%); }
     details { margin-top: 12px; }
     summary { cursor: pointer; color: var(--accent); }
-    .actions { flex-wrap: wrap; justify-content: flex-start; margin-top: 18px; }
+    .actions { flex-wrap: wrap; justify-content: flex-start; }
+    .form-actions { justify-content: flex-start; margin-top: 18px; }
     .primary { margin: 0; }
     .muted { color: var(--muted); }
-    @media (max-width: 600px) { .programme-header { align-items: flex-start; } .actions .button { flex: 1 1 100%; } }
+    @media (max-width: 600px) {
+      .programme-header, .editor-heading { align-items: flex-start; flex-direction: column; }
+      .actions .button { flex: 1 1 100%; }
+    }
   `]
 })
 export class ProgrammesComponent implements OnInit {
@@ -160,24 +256,25 @@ export class ProgrammesComponent implements OnInit {
   readonly error = signal('');
   readonly notice = signal('');
   readonly editing = signal<Programme | null>(null);
+  readonly statusFilter = signal<ProgrammeStatus | ''>('');
   readonly form = this.fb.group({
     memberId: this.fb.control('', Validators.required),
     title: this.fb.control('', [Validators.required, Validators.maxLength(120)]),
     goal: this.fb.control('', [Validators.required, Validators.maxLength(500)]),
     experienceLevel: this.fb.control<'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED'>('BEGINNER'),
     durationWeeks: this.fb.control(4, [Validators.required, Validators.min(1), Validators.max(52)]),
-    sessionTitle: this.fb.control('Workout A', Validators.required),
-    exerciseId: this.fb.control('', Validators.required),
-    sets: this.fb.control(3, [Validators.required, Validators.min(1), Validators.max(20)]),
-    repetitions: this.fb.control(8, [Validators.required, Validators.min(1), Validators.max(100)]),
-    restSeconds: this.fb.control(60, [Validators.required, Validators.min(0), Validators.max(3600)])
+    sessions: this.fb.array<SessionForm>([this.createSessionForm()])
   });
+
+  get sessions(): FormArray<SessionForm> {
+    return this.form.controls.sessions;
+  }
 
   ngOnInit(): void {
     this.load();
     this.api.getExercises().subscribe({
       next: (page) => this.exercises.set(page.content),
-      error: () => this.error.set('Could not load active exercises for programme viewing.')
+      error: () => this.error.set('Could not load active exercises for programme editing.')
     });
     if (this.isCoach) {
       this.membersLoading.set(true);
@@ -191,68 +288,142 @@ export class ProgrammesComponent implements OnInit {
   load(): void {
     this.loading.set(true);
     this.error.set('');
-    this.api.getProgrammes().subscribe({
+    this.api.getProgrammes(this.statusFilter() || undefined).subscribe({
       next: (programmes) => { this.programmes.set(programmes); this.loading.set(false); },
       error: (error: unknown) => { this.error.set(this.message(error)); this.loading.set(false); }
     });
+  }
+
+  setStatusFilter(event: Event): void {
+    const selected = (event.target as HTMLSelectElement).value;
+    const statuses: ProgrammeStatus[] = [
+      'DRAFT', 'PENDING_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'PUBLISHED', 'ARCHIVED'
+    ];
+    this.statusFilter.set(statuses.find((status) => status === selected) ?? '');
+    this.load();
   }
 
   exerciseName(id: string): string {
     return this.exercises().find((exercise) => exercise.id === id)?.name ?? 'Exercise';
   }
 
+  addSession(): void {
+    if (this.sessions.length < 14) this.sessions.push(this.createSessionForm());
+  }
+
+  removeSession(index: number): void {
+    if (this.sessions.length > 1) this.sessions.removeAt(index);
+  }
+
+  moveSession(index: number, offset: number): void {
+    this.moveControl(this.sessions, index, offset);
+  }
+
+  addItem(session: SessionForm): void {
+    if (session.controls.items.length < 20) session.controls.items.push(this.createItemForm());
+  }
+
+  removeItem(session: SessionForm, index: number): void {
+    if (session.controls.items.length > 1) session.controls.items.removeAt(index);
+  }
+
+  moveItem(session: SessionForm, index: number, offset: number): void {
+    this.moveControl(session.controls.items, index, offset);
+  }
+
+  setPrescriptionType(item: ItemForm, event: Event): void {
+    const durationBased = (event.target as HTMLSelectElement).value === 'DURATION';
+    if (!durationBased) {
+      item.controls.durationSeconds.setValue(null);
+      if (item.controls.repetitions.value === null) item.controls.repetitions.setValue(8);
+    } else {
+      item.controls.repetitions.setValue(null);
+      if (item.controls.durationSeconds.value === null) item.controls.durationSeconds.setValue(30);
+    }
+  }
+
   edit(programme: Programme): void {
-    const session = programme.sessions[0];
-    const item = session?.items[0];
-    if (!session || !item) return;
     this.editing.set(programme);
     this.form.patchValue({
       memberId: programme.memberId,
       title: programme.title,
       goal: programme.goal,
       experienceLevel: programme.experienceLevel,
-      durationWeeks: programme.durationWeeks,
-      sessionTitle: session.title,
-      exerciseId: item.exerciseId,
-      sets: item.sets,
-      repetitions: item.repetitions ?? 8,
-      restSeconds: item.restSeconds
+      durationWeeks: programme.durationWeeks
     });
+    this.sessions.clear();
+    programme.sessions.forEach((session) => this.sessions.push(this.createSessionForm({
+      title: session.title,
+      notes: session.notes,
+      items: session.items.map((item) => ({
+        exerciseId: item.exerciseId,
+        sets: item.sets,
+        repetitions: item.repetitions,
+        durationSeconds: item.durationSeconds,
+        restSeconds: item.restSeconds,
+        suggestedLoadKg: item.suggestedLoadKg,
+        notes: item.notes
+      }))
+    })));
+    if (this.sessions.length === 0) this.addSession();
+    this.error.set('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   cancelEdit(): void {
     this.editing.set(null);
-    this.form.reset({
-      memberId: '', title: '', goal: '', experienceLevel: 'BEGINNER', durationWeeks: 4,
-      sessionTitle: 'Workout A', exerciseId: '', sets: 3, repetitions: 8, restSeconds: 60
-    });
+    this.resetForm();
+    this.error.set('');
   }
 
   save(): void {
-    if (this.form.invalid) { this.form.markAllAsTouched(); return; }
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      this.error.set('Complete all required programme and exercise fields.');
+      return;
+    }
+    const raw = this.form.getRawValue();
+    if (raw.sessions.length === 0 || raw.sessions.some((session) => session.items.length === 0)) {
+      this.error.set('A programme needs at least one session, and every session needs an exercise.');
+      return;
+    }
+    const invalidPrescription = raw.sessions.some((session) => session.items.some((item) =>
+      item.prescriptionType === 'REPETITIONS'
+        ? item.repetitions === null || item.durationSeconds !== null
+        : item.durationSeconds === null || item.repetitions !== null));
+    if (invalidPrescription) {
+      this.error.set('Each exercise must have either repetitions or a duration, not both.');
+      return;
+    }
+    const invalidLoad = raw.sessions.some((session) => session.items.some((item) =>
+      item.suggestedLoadKg !== null
+      && this.exercises().find((exercise) => exercise.id === item.exerciseId)?.equipmentCategory === 'BODYWEIGHT'));
+    if (invalidLoad) {
+      this.error.set('Bodyweight exercises cannot have a suggested external load.');
+      return;
+    }
     this.saving.set(true);
     this.error.set('');
-    const values = this.form.getRawValue();
     const input: ProgrammeInput = {
-      memberId: values.memberId,
-      title: values.title.trim(),
-      goal: values.goal.trim(),
-      experienceLevel: values.experienceLevel,
-      durationWeeks: Number(values.durationWeeks),
+      memberId: raw.memberId,
+      title: raw.title.trim(),
+      goal: raw.goal.trim(),
+      experienceLevel: raw.experienceLevel,
+      durationWeeks: Number(raw.durationWeeks),
       version: null,
-      sessions: [{
-        title: values.sessionTitle.trim(),
-        notes: null,
-        items: [{
-          exerciseId: values.exerciseId,
-          sets: Number(values.sets),
-          repetitions: Number(values.repetitions),
-          durationSeconds: null,
-          restSeconds: Number(values.restSeconds),
-          suggestedLoadKg: null,
-          notes: null
-        }]
-      }]
+      sessions: raw.sessions.map((session): ProgrammeSessionInput => ({
+        title: session.title.trim(),
+        notes: session.notes.trim() || null,
+        items: session.items.map((item): ProgrammeItemInput => ({
+          exerciseId: item.exerciseId,
+          sets: Number(item.sets),
+          repetitions: item.prescriptionType === 'REPETITIONS' ? Number(item.repetitions) : null,
+          durationSeconds: item.prescriptionType === 'DURATION' ? Number(item.durationSeconds) : null,
+          restSeconds: Number(item.restSeconds),
+          suggestedLoadKg: item.suggestedLoadKg,
+          notes: item.notes.trim() || null
+        }))
+      }))
     };
     const current = this.editing();
     const request = current ? this.api.updateProgramme(current, input) : this.api.createProgramme(input);
@@ -260,25 +431,71 @@ export class ProgrammesComponent implements OnInit {
       next: () => {
         this.notice.set(current ? 'Programme draft updated.' : 'Draft created; it is not published.');
         this.saving.set(false);
-        this.cancelEdit();
+        this.editing.set(null);
+        this.resetForm();
         this.load();
       },
       error: (error: unknown) => { this.error.set(this.message(error)); this.saving.set(false); }
     });
   }
 
-  submit(programme: Programme): void { this.action(programme, this.api.submitProgramme(programme.id), 'Submitted for review.'); }
-  publish(programme: Programme): void { this.action(programme, this.api.publishProgramme(programme.id), 'Programme published.'); }
-  archive(programme: Programme): void { this.action(programme, this.api.archiveProgramme(programme.id), 'Programme archived.'); }
-  newRevision(programme: Programme): void { this.action(programme, this.api.createRevision(programme.id), 'New revision created as a draft.'); }
+  submit(programme: Programme): void { this.action(this.api.submitProgramme(programme.id), 'Submitted for review.'); }
+  publish(programme: Programme): void { this.action(this.api.publishProgramme(programme.id), 'Programme published.'); }
+  archive(programme: Programme): void { this.action(this.api.archiveProgramme(programme.id), 'Programme archived.'); }
+  newRevision(programme: Programme): void { this.action(this.api.createRevision(programme.id), 'New revision created as a draft.'); }
 
   review(programme: Programme, decision: 'APPROVED' | 'CHANGES_REQUESTED'): void {
     const comment = window.prompt(decision === 'APPROVED' ? 'Optional review note:' : 'What needs to change?');
     if (comment === null) return;
-    this.action(programme, this.api.reviewProgramme(programme.id, decision, comment), 'Review recorded.');
+    this.action(this.api.reviewProgramme(programme.id, decision, comment), 'Review recorded.');
   }
 
-  private action(programme: Programme, request: import('rxjs').Observable<Programme>, message: string): void {
+  private createSessionForm(value?: ProgrammeSessionInput): SessionForm {
+    const items = value ? value.items.map((item) => this.createItemForm(item)) : [this.createItemForm()];
+    return this.fb.group({
+      title: this.fb.control(value?.title ?? 'Workout A', [Validators.required, Validators.maxLength(120)]),
+      notes: this.fb.control(value?.notes ?? '', Validators.maxLength(1000)),
+      items: this.fb.array<ItemForm>(items)
+    });
+  }
+
+  private createItemForm(value?: ProgrammeItemInput): ItemForm {
+    const durationBased = value?.durationSeconds !== null && value?.durationSeconds !== undefined;
+    return this.fb.group({
+      exerciseId: this.fb.control(value?.exerciseId ?? '', Validators.required),
+      prescriptionType: this.fb.control<PrescriptionType>(durationBased ? 'DURATION' : 'REPETITIONS'),
+      sets: this.fb.control(value?.sets ?? 3, [Validators.required, Validators.min(1), Validators.max(20)]),
+      repetitions: this.fb.control<number | null>(value?.repetitions ?? 8, [Validators.min(1), Validators.max(100)]),
+      durationSeconds: this.fb.control<number | null>(value?.durationSeconds ?? null, [Validators.min(1), Validators.max(7200)]),
+      restSeconds: this.fb.control(value?.restSeconds ?? 60, [Validators.required, Validators.min(0), Validators.max(3600)]),
+      suggestedLoadKg: this.fb.control<number | null>(value?.suggestedLoadKg ?? null, [Validators.min(0.01), Validators.max(99999.99)]),
+      notes: this.fb.control(value?.notes ?? '', Validators.maxLength(500))
+    });
+  }
+
+  private moveControl<T extends FormGroup>(array: FormArray<T>, index: number, offset: number): void {
+    const target = index + offset;
+    if (target < 0 || target >= array.length) return;
+    const control = array.controls[index];
+    if (!control) return;
+    array.controls.splice(index, 1);
+    array.controls.splice(target, 0, control);
+    array.updateValueAndValidity();
+  }
+
+  private resetForm(): void {
+    this.form.reset({
+      memberId: '',
+      title: '',
+      goal: '',
+      experienceLevel: 'BEGINNER',
+      durationWeeks: 4
+    });
+    this.sessions.clear();
+    this.sessions.push(this.createSessionForm());
+  }
+
+  private action(request: import('rxjs').Observable<Programme>, message: string): void {
     this.error.set('');
     request.subscribe({
       next: () => { this.notice.set(message); this.load(); },

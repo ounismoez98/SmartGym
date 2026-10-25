@@ -197,6 +197,13 @@ owns DDL. The service does not connect to M1's database.
   with ordered sessions and typed exercise prescriptions. A prescription
   must specify either repetitions or seconds, not both. `PATCH` replaces the
   draft details/sessions and requires the current `version`.
+- Sessions and items also have programme-scoped create, update, delete, and
+  order endpoints under `/api/training/programmes/{id}/sessions`. Each
+  mutation requires the current programme version (in the request body for
+  create/update/order, or the `version` query parameter for delete); use the
+  returned version on the next write. Ordering requests must include every
+  existing scoped ID exactly once. Nested mutations preserve unaffected
+  session/item identifiers.
 - `POST /api/training/programmes/{id}/submit`, `/reviews`, `/publish`,
   `/archive`, and `/revisions` implement the review/publish workflow.
   Publishing requires approval of the current revision. Published content
@@ -208,7 +215,9 @@ owns DDL. The service does not connect to M1's database.
 - `POST /api/training/workout-logs`, `GET /api/training/workout-logs[/{id}]`,
   `PATCH`, and `DELETE` support member-owned logging and coach reads for
   assigned members. Programme/session IDs are checked against the member's
-  published programme and selected session.
+  published programme and selected session. Members can record multiple sets
+  from a published session or create standalone workouts, then edit or delete
+  their own logs.
 - `GET /api/training/me/progress` and coach-only
   `GET /api/training/members/{memberId}/progress` return completed workout
   counts by ISO week, repetition totals, maximum explicitly recorded load,
@@ -251,6 +260,34 @@ empty review history):
   }]
 }
 ```
+
+Example nested programme mutations (use the latest response `version` and the
+session/item IDs returned by the service):
+
+```json
+{
+  "version": 1,
+  "session": {
+    "title": "Workout B",
+    "notes": null,
+    "items": [{
+      "exerciseId": "10000000-0000-4000-8000-000000000002",
+      "sets": 3,
+      "repetitions": 10,
+      "durationSeconds": null,
+      "restSeconds": 60,
+      "suggestedLoadKg": null,
+      "notes": null
+    }]
+  }
+}
+```
+
+Send that body to `POST /api/training/programmes/{id}/sessions`; use
+`PUT /api/training/programmes/{id}/sessions/order` with
+`{"version":2,"orderedIds":["<session-id-1>","<session-id-2>"]}` to reorder.
+Item mutations use the same versioned pattern under
+`/sessions/{sessionId}/items`.
 
 Example standalone workout request (member identity is resolved from M1;
 clients must not send `memberId`):
@@ -318,11 +355,11 @@ mvn -f training-service\pom.xml test
 npm.cmd --prefix frontend run build
 ```
 
-Verified on 2026-10-24: the training-service suite passed all 17 tests, the
-Angular production build passed, `docker compose --env-file .env.example
-config --quiet` passed, and the training-service Docker image built. The
-service has not yet been started against a live Compose stack or browser-tested
-with provisioned Keycloak accounts.
+Verified on 2026-10-25: the training-service suite passed all 20 tests, the
+M1 backend suite passed all 8 tests, the Angular production build passed, and
+the current Compose configuration validates. The training-service Docker
+image built and was previously started healthy with demo records. Live JWT
+signature/issuer/audience checks and browser M3 acceptance remain unverified.
 
 The complete training demo seed is repeatable and development-only. Rebuild
 the API first so the development provisioning endpoint returns profile
@@ -350,18 +387,20 @@ After seeding, open `http://localhost:8088/training` and refresh if the SPA
 was already open. As `gym-coach`, open **Programmes** to see draft, pending
 review, and published states; submit the draft, approve the pending revision,
 and publish it to exercise those transitions. As `member-a`, open **Programmes**
-to see only the published plan, then **Workout history** to inspect sample
-logs and progress or add/edit/delete a standalone log. As `member-b`, verify
-that only Member B's own published plan is visible. The exercise catalogue
-supports coach/admin create, edit, search/filter, and archive.
+to see only the published plan and use **Log this session**; **Workout history**
+also lets you inspect sample logs and progress or add/edit/delete standalone
+and programme-session logs. As `member-b`, verify that only Member B's own
+published plan is visible. The exercise catalogue supports coach/admin create,
+edit, search/filter, and archive.
 
 The asynchronous AI-generation and generated-image features are not
 implemented, so no seeded records pretend to demonstrate them.
 
-The programme screen currently creates/edits a single-session, single-item
-draft and presents review/publication actions. The API supports multiple
-sessions/items; a full dynamic Angular programme editor and member-side
-workout-from-programme UI remain unfinished.
+The programme screen supports multi-session, multi-item drafts with explicit
+ordering, typed repetition/time prescriptions, and review/publication actions.
+Members can log a completed published programme session, enter multiple
+actual sets, edit/delete logs, and view weekly activity and per-exercise
+maximum recorded loads.
 
 ### M3 workflow and delivery limits
 
@@ -423,8 +462,7 @@ a model. The optional illustration feature, sample AI jobs, and generated-
 media storage are also unfinished.
 
 Not delivered in this checkpoint: AI generation (Phase 5), illustrations
-(Phase 6), comprehensive production integration/browser tests and diagrams
-beyond the programme state machine (Phase 7), full multi-session Angular
-editing, and development seed references to M1 coach/member records. M1
-profile IDs must be provisioned by the shared development workflow rather
-than by modifying M1 or its database.
+(Phase 6), and comprehensive production integration/browser tests and
+diagrams beyond the programme state machine (Phase 7). The development seed
+uses the shared M1 provisioning contract to resolve profile IDs and does not
+access or modify M1's database.

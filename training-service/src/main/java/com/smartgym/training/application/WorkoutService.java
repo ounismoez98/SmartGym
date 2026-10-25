@@ -13,6 +13,7 @@ import java.util.UUID;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import com.smartgym.training.domain.Exercise;
+import com.smartgym.training.domain.EquipmentCategory;
 import com.smartgym.training.domain.ProgrammeItem;
 import com.smartgym.training.domain.ProgrammeSession;
 import com.smartgym.training.domain.ProgrammeStatus;
@@ -236,8 +237,12 @@ public class WorkoutService {
             if (hasRepetitions == hasDuration) {
                 throw invalid("Each logged set must record repetitions or duration, but not both.");
             }
-            if (exercises.findById(set.exerciseId()).isEmpty()) {
-                throw invalid("A workout set references an unknown exercise.");
+            Exercise exercise = exercises.findById(set.exerciseId())
+                    .orElseThrow(() -> invalid("A workout set references an unknown exercise."));
+            if (set.loadKg() != null
+                    && (set.durationSeconds() != null
+                            || exercise.getEquipmentCategory() == EquipmentCategory.BODYWEIGHT)) {
+                throw invalid("Loads are not recorded for timed or bodyweight exercise sets.");
             }
             if (allowedExerciseIds != null && !allowedExerciseIds.contains(set.exerciseId())) {
                 throw invalid("A logged exercise is not part of the selected programme session.");

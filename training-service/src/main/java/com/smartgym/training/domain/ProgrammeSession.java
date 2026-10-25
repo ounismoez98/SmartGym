@@ -55,6 +55,32 @@ public class ProgrammeSession {
         this.programme = programme;
     }
 
+    public void update(String title, String notes) {
+        this.title = title;
+        this.notes = notes;
+    }
+
+    public void setDayOrder(int dayOrder) {
+        this.dayOrder = dayOrder;
+    }
+
+    public void addItem(ProgrammeItem item) {
+        item.attachTo(this);
+        items.add(item);
+    }
+
+    public void addItems(List<ProgrammeItem> replacements) {
+        replacements.forEach(this::addItem);
+    }
+
+    public void removeItem(ProgrammeItem item) {
+        items.remove(item);
+    }
+
+    public void clearItems() {
+        items.clear();
+    }
+
     public UUID getId() { return id; }
     public TrainingProgramme getProgramme() { return programme; }
     public String getTitle() { return title; }

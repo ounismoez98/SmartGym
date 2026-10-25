@@ -113,8 +113,9 @@ export class TrainingWorkflowsApiService {
     return this.http.get<ExercisePage>(`${this.base}/exercises`, { params });
   }
 
-  getProgrammes() {
-    return this.http.get<Programme[]>(`${this.base}/programmes`);
+  getProgrammes(status?: ProgrammeStatus) {
+    const params = status ? new HttpParams().set('status', status) : undefined;
+    return this.http.get<Programme[]>(`${this.base}/programmes`, { params });
   }
 
   createProgramme(input: ProgrammeInput) {

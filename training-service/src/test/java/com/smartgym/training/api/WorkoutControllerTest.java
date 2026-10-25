@@ -2,6 +2,7 @@ package com.smartgym.training.api;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -16,7 +17,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartgym.training.domain.EquipmentCategory;
 import com.smartgym.training.domain.Exercise;
 import com.smartgym.training.domain.ExerciseDifficulty;
+import com.smartgym.training.domain.ExperienceLevel;
 import com.smartgym.training.domain.MuscleGroup;
+import com.smartgym.training.domain.ProgrammeItem;
+import com.smartgym.training.domain.ProgrammeSession;
+import com.smartgym.training.domain.TrainingProgramme;
 import com.smartgym.training.integration.MembershipClient;
 import com.smartgym.training.repository.ExerciseRepository;
 import com.smartgym.training.repository.TrainingProgrammeRepository;
@@ -126,6 +131,69 @@ class WorkoutControllerTest {
         mvc.perform(get("/api/training/workout-logs/{id}", logId)
                         .with(principal("other-member", "other-member-token", "MEMBER")))
                 .andExpect(status().isForbidden());
+
+        mvc.perform(delete("/api/training/workout-logs/{id}", logId)
+                        .with(principal(MEMBER_SUBJECT, "member-token", "MEMBER")))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void memberCanLogOnlyExercisesFromTheirPublishedProgrammeSession() throws Exception {
+        TrainingProgramme programme = new TrainingProgramme(
+                MEMBER_ID,
+                UUID.randomUUID(),
+                "Strength plan",
+                "Build strength",
+                ExperienceLevel.BEGINNER,
+                4,
+                "coach-subject");
+        programme.replaceSessions(List.of(new ProgrammeSession(
+                "Workout A",
+                1,
+                null,
+                List.of(new ProgrammeItem(
+                        exerciseId,
+                        1,
+                        3,
+                        8,
+                        null,
+                        60,
+                        null,
+                        null)))));
+        programme.publish();
+        programme = programmeRepository.saveAndFlush(programme);
+        UUID programmeId = programme.getId();
+        UUID programmeSessionId = programme.getSessions().get(0).getId();
+        UUID unrelatedExerciseId = exerciseRepository.save(new Exercise(
+                "Row",
+                null,
+                "Pull with control.",
+                MuscleGroup.BACK,
+                ExerciseDifficulty.BEGINNER,
+                EquipmentCategory.DUMBBELL)).getId();
+
+        mvc.perform(post("/api/training/workout-logs")
+                        .with(principal(MEMBER_SUBJECT, "member-token", "MEMBER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"programmeId":"%s","programmeSessionId":"%s",
+                                 "performedAt":"2026-10-22T10:00:00Z","notes":null,
+                                 "sets":[{"exerciseId":"%s","repetitions":8,"durationSeconds":null,
+                                 "loadKg":12.5,"notes":null}]}
+                                """.formatted(programmeId, programmeSessionId, exerciseId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.programmeSessionId").value(programmeSessionId.toString()));
+
+        mvc.perform(post("/api/training/workout-logs")
+                        .with(principal(MEMBER_SUBJECT, "member-token", "MEMBER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"programmeId":"%s","programmeSessionId":"%s",
+                                 "performedAt":"2026-10-22T10:00:00Z","notes":null,
+                                 "sets":[{"exerciseId":"%s","repetitions":8,"durationSeconds":null,
+                                 "loadKg":12.5,"notes":null}]}
+                                """.formatted(programmeId, programmeSessionId, unrelatedExerciseId)))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -148,6 +216,43 @@ class WorkoutControllerTest {
                                  "loadKg":null,"notes":null}]}
                                 """.formatted(exerciseId)))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void rejectsInventedLoadsForBodyweightAndTimedSets() throws Exception {
+        UUID bodyweightId = exerciseRepository.save(new Exercise(
+                "Push-up",
+                null,
+                "Lower and push up.",
+                MuscleGroup.CHEST,
+                ExerciseDifficulty.BEGINNER,
+                EquipmentCategory.BODYWEIGHT)).getId();
+        var member = principal(MEMBER_SUBJECT, "member-token", "MEMBER");
+
+        mvc.perform(post("/api/training/workout-logs")
+                        .with(member)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(workoutRequest(bodyweightId, 10, null, 5.0)))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/training/workout-logs")
+                        .with(member)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(workoutRequest(exerciseId, null, 30, 5.0)))
+                .andExpect(status().isBadRequest());
+    }
+
+    private static String workoutRequest(UUID exerciseId, Integer repetitions, Integer duration, Double load) {
+        return """
+                {"programmeId":null,"programmeSessionId":null,
+                 "performedAt":"2026-10-22T10:00:00Z","notes":null,
+                 "sets":[{"exerciseId":"%s","repetitions":%s,"durationSeconds":%s,
+                 "loadKg":%s,"notes":null}]}
+                """.formatted(
+                exerciseId,
+                repetitions == null ? "null" : repetitions,
+                duration == null ? "null" : duration,
+                load == null ? "null" : load);
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor principal(

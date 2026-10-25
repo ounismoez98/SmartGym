@@ -4,8 +4,10 @@ import static org.mockito.Mockito.when;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -137,6 +139,126 @@ class ProgrammeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(programmeRequestWithVersion(999L)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void sessionAndItemCrudSupportsOrderingAndRejectsStaleVersions() throws Exception {
+        String programmeId = createProgramme();
+        var coach = principal(COACH_SUBJECT, "coach-token", "COACH");
+        String created = mvc.perform(post("/api/training/programmes/{id}/sessions", programmeId)
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":0,"session":{"title":"Workout B","notes":null,"items":[
+                                  {"exerciseId":"%s","sets":3,"repetitions":8,"durationSeconds":null,
+                                   "restSeconds":60,"suggestedLoadKg":null,"notes":null}]}}
+                                """.formatted(exerciseId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        var afterSession = objectMapper.readTree(created);
+        String sessionId = afterSession.at("/sessions/0/id").asText();
+        String version = afterSession.get("version").asText();
+
+        String withItem = mvc.perform(post(
+                                "/api/training/programmes/{id}/sessions/{sessionId}/items",
+                                programmeId,
+                                sessionId)
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":%s,"item":{"exerciseId":"%s","sets":2,"repetitions":10,
+                                 "durationSeconds":null,"restSeconds":45,"suggestedLoadKg":null,"notes":null}}
+                                """.formatted(version, exerciseId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions[0].items.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        var afterItem = objectMapper.readTree(withItem);
+        String[] itemIds = {
+                afterItem.at("/sessions/0/items/0/id").asText(),
+                afterItem.at("/sessions/0/items/1/id").asText()
+        };
+        version = afterItem.get("version").asText();
+
+        String reorderedItems = mvc.perform(put(
+                                "/api/training/programmes/{id}/sessions/{sessionId}/items/order",
+                                programmeId,
+                                afterItem.at("/sessions/0/id").asText())
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":%s,"orderedIds":["%s","%s"]}
+                                """.formatted(version, itemIds[1], itemIds[0])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions[0].items[0].orderIndex").value(1))
+                .andReturn().getResponse().getContentAsString();
+        var afterItemOrder = objectMapper.readTree(reorderedItems);
+        String firstSessionId = afterItemOrder.at("/sessions/0/id").asText();
+        String secondSessionId = afterItemOrder.at("/sessions/1/id").asText();
+        version = afterItemOrder.get("version").asText();
+
+        String reorderedSessions = mvc.perform(put(
+                                "/api/training/programmes/{id}/sessions/order", programmeId)
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":%s,"orderedIds":["%s","%s"]}
+                                """.formatted(version, secondSessionId, firstSessionId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions[0].title").value("Workout B"))
+                .andReturn().getResponse().getContentAsString();
+        var afterSessionOrder = objectMapper.readTree(reorderedSessions);
+        String currentSessionId = afterSessionOrder.at("/sessions/0/id").asText();
+        version = afterSessionOrder.get("version").asText();
+
+        mvc.perform(delete("/api/training/programmes/{id}/sessions/{sessionId}?version=0",
+                        programmeId, currentSessionId)
+                        .with(coach))
+                .andExpect(status().isConflict());
+
+        String updatedSession = mvc.perform(patch(
+                                "/api/training/programmes/{id}/sessions/{sessionId}",
+                                programmeId,
+                                currentSessionId)
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":%s,"session":{"title":"Workout B revised","notes":"Updated",
+                                 "items":[{"exerciseId":"%s","sets":4,"repetitions":6,
+                                  "durationSeconds":null,"restSeconds":75,"suggestedLoadKg":null,"notes":null}]}}
+                                """.formatted(version, exerciseId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions[0].title").value("Workout B revised"))
+                .andReturn().getResponse().getContentAsString();
+        var afterSessionUpdate = objectMapper.readTree(updatedSession);
+        String itemId = afterSessionUpdate.at("/sessions/0/items/0/id").asText();
+        version = afterSessionUpdate.get("version").asText();
+
+        String updatedItem = mvc.perform(patch(
+                                "/api/training/programmes/{id}/sessions/{sessionId}/items/{itemId}",
+                                programmeId,
+                                currentSessionId,
+                                itemId)
+                        .with(coach)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"version":%s,"item":{"exerciseId":"%s","sets":5,"repetitions":5,
+                                 "durationSeconds":null,"restSeconds":90,"suggestedLoadKg":null,"notes":"Top set"}}
+                                """.formatted(version, exerciseId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessions[0].items[0].id").value(itemId))
+                .andReturn().getResponse().getContentAsString();
+        version = objectMapper.readTree(updatedItem).get("version").asText();
+
+        mvc.perform(delete("/api/training/programmes/{id}/sessions/{sessionId}/items/{itemId}?version={version}",
+                        programmeId, currentSessionId, itemId, version)
+                        .with(coach))
+                .andExpect(status().isNoContent());
+
+        mvc.perform(delete("/api/training/programmes/{id}/sessions/{sessionId}?version=7",
+                        programmeId, currentSessionId)
+                        .with(coach))
+                .andExpect(status().isNoContent());
     }
 
     @Test
