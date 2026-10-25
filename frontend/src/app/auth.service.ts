@@ -10,7 +10,7 @@ const knownRoutes = new Set([
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly keycloak = new Keycloak({
-    url: 'http://localhost:8080',
+    url: 'http://localhost:8180',
     realm: 'gym',
     clientId: 'gym-frontend'
   });

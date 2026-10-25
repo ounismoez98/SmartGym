@@ -11,7 +11,7 @@
 - Repository started empty (no prior application/commits); current branch is
   `main`. Initial runnable authentication vertical slice has been created.
 - Development stack was started and browser-smoke-tested at
-  `http://localhost:8088`; Keycloak is at `http://localhost:8080`.
+  `http://localhost:8088`; Keycloak is at `http://localhost:8180`.
 - Local secrets are in ignored `.env`; use `.env.example` as the template and
   never copy actual secret values into documentation or source control.
 

@@ -26,7 +26,7 @@ The local HTTP configuration is for development only:
 | Component | URL |
 | --- | --- |
 | Angular/Nginx | `http://localhost:8088` |
-| Keycloak | `http://localhost:8080` |
+| Keycloak | `http://localhost:8180` |
 | Realm | `gym` |
 | Business API | `http://localhost:8088/api/...` (proxied by Nginx) |
 | RabbitMQ management | `http://localhost:15672` |
@@ -205,7 +205,7 @@ exactly `http://localhost:8088`.
   session, while `403` opens the forbidden page.
 - Spring validates the JWT signature using the Docker-internal Keycloak JWKS
   URL and independently validates the browser-visible issuer
-  `http://localhost:8080/realms/gym` and the required
+  `http://localhost:8180/realms/gym` and the required
   `smart-gym-api` audience. Networking does not disable issuer or audience
   validation.
 - `GET /api/membership/me` derives its subject, display name, and application

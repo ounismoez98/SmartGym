@@ -16,7 +16,7 @@ foreach ($name in $requiredVariables) {
     }
 }
 
-$keycloakBase = "http://localhost:8080"
+$keycloakBase = "http://localhost:8180"
 $apiBase = "http://localhost:8081"
 $realm = "gym"
 $adminTokenResponse = Invoke-RestMethod `
