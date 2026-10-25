@@ -272,9 +272,15 @@ exactly `http://localhost:8088`.
   state. Confirmation sends the message to the member email read from the
   database. Local SMTP uses MailHog at `http://localhost:8025` (SMTP port
   `1025`).
-- The assistant sends only a member's first name, plan name, expiration date,
-  plan amount, and validated policy text to Groq. It does not send email,
-  phone numbers, member IDs, or Keycloak IDs. Generated reminder dates and
+- The assistant does not send member first or last names, email addresses,
+  phone numbers, or IDs to Groq. Reminder prompts use the `{{FIRST_NAME}}`
+  marker, which the API replaces with the member's first name only after the
+  generated date and amount pass validation; a missing name becomes
+  `Bonjour`. Explain questions and policy/plan text are scanned for email
+  addresses, phone-like number sequences, and UUIDs, which are masked before
+  transmission. This does not reliably detect a person's name written in
+  free-form text: do not enter personal data, and keep validated gym policies
+  general and free of personal information. Generated reminder dates and
   amounts are checked against database facts; invalid or incomplete output
   becomes an editable draft marked `[À COMPLÉTER]`.
 - The `/membership` Angular workspace provides role-aware member, subscription,
@@ -318,10 +324,11 @@ record. These roles can overlap.
 ## Login acceptance status
 
 Backend API tests use MockMvc, simulated JWTs, and H2; they do not verify live
-Keycloak signatures or browser flows. In this session, Docker Compose services
-were running, the frontend returned HTTP 200, and the API OpenAPI document
-returned HTTP 200 with 29 documented paths. No interactive browser login or
-full Playwright flow was executed.
+Keycloak signatures. The latest recorded checks in this workspace were run on
+2026-10-25: Maven reported 111 tests, with 0 failures and 4 Testcontainers
+tests skipped; Angular unit tests passed 5 tests; and the Chromium Playwright
+membership E2E passed 1 test. The E2E ran against the local Compose stack with
+a test-only LLM mock and MailHog.
 
 | Acceptance item | Covered by automated test | Browser/Compose check |
 | --- | --- | --- |
@@ -332,7 +339,7 @@ full Playwright flow was executed.
 | Angular calls `GET /api/membership/me` with an access token | No | not re-verified |
 | Role-aware navigation, protected routes, and reload behavior | No | not re-verified |
 | Missing/malformed token returns `401`; role and ownership denials return `403` | Yes — MockMvc tests | not re-verified live |
-| Member A cannot read another member's private record | Yes — MockMvc tests | E2E prepared, not run |
+| Member A cannot read another member's private record | Yes — MockMvc tests | Yes — Playwright E2E received `403` |
 | Logout ends the application session and protected content is inaccessible | No | not re-verified |
 
 - [ ] Expired sessions recover without a redirect loop (not tested).
@@ -360,12 +367,17 @@ run after the development seed migration, allowing existing local volumes to
 receive migrations added after their initial seed.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
-payment deletion-guard tests. The latest Maven run passed 96 tests with 0
-failures and 4 Testcontainers tests skipped. Angular unit tests passed 5 tests;
-the production build passed. The Playwright E2E scenario covers the admin
-membership workflow, MailHog confirmation, and member ownership denial. It
-was not executed beyond its credential precondition because local E2E login
-credentials were absent.
+payment deletion-guard tests. The latest Maven run reported 111 tests: 0
+failures and 4 skipped because Docker-backed Testcontainers tests were not
+executed in that run. Angular unit tests passed 5 tests, and the production
+build passed. The Playwright Chromium scenario passed 1 E2E flow covering the
+admin membership workflow, payment correction history, MailHog confirmation,
+and member ownership denial. The E2E uses a local mock LLM and does not call
+Groq.
+Not verified: Testcontainers against PostgreSQL in the latest Maven run,
+Groq against the real remote provider, and a manual browser review of all
+screens and roles. The automated E2E run is not a substitute for that manual
+review.
 The OpenAPI JSON document is publicly readable; the described API operations
 still require a valid bearer JWT and enforce their normal role/ownership rules.
 
