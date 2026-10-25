@@ -16,6 +16,7 @@ public record PaymentResponse(
         Payment.Status status,
         UUID correctsPaymentId,
         String reason,
+        String createdBy,
         Instant paidAt,
         Instant createdAt,
         List<PaymentResponse> corrections) {
@@ -30,6 +31,7 @@ public record PaymentResponse(
                 payment.getStatus(),
                 payment.getCorrectsPaymentId(),
                 payment.getReason(),
+                payment.getCreatedBy(),
                 payment.getPaidAt(),
                 payment.getCreatedAt(),
                 List.copyOf(corrections));

@@ -66,7 +66,9 @@ export interface Payment {
   status: 'RECORDED' | 'CORRECTED';
   correctsPaymentId: string | null;
   reason: string | null;
+  createdBy: string;
   paidAt: string;
+  createdAt: string;
   corrections: Payment[];
 }
 
@@ -193,6 +195,10 @@ export class MembershipApiService {
     return this.http.get<ApiPage<Payment>>('/api/membership/payments', {
       params: this.params(query)
     });
+  }
+
+  getPayment(id: string) {
+    return this.http.get<Payment>(`/api/membership/payments/${id}`);
   }
 
   createPayment(request: {

@@ -181,19 +181,39 @@
             <td><span class="status-pill">{{ payment.status }}</span>
               <ul *ngIf="payment.corrections.length"><li *ngFor="let correction of payment.corrections">{{ formatMoney(correction.amountCents, correction.currency) }} — {{ correction.reason }}</li></ul>
             </td>
-            <td><button *ngIf="isAdmin && payment.status === 'RECORDED'" class="button quiet compact" type="button" (click)="choosePayment(payment)">Correct</button></td>
+            <td class="row-actions">
+              <button class="button quiet compact" type="button" (click)="openPayment(payment)">View history</button>
+              <button *ngIf="isAdmin && payment.status === 'RECORDED'" class="button quiet compact" type="button" (click)="choosePayment(payment)">Correct</button>
+            </td>
           </tr>
           <tr *ngIf="payments.length === 0"><td colspan="6" class="empty-state">No payments found.</td></tr>
         </tbody>
       </table>
     </div>
-    <form *ngIf="selectedPayment" [formGroup]="paymentCorrectionForm" (ngSubmit)="correctPayment()" class="account-card workspace-card">
-      <h3>Correct payment {{ selectedPayment.id }}</h3>
-      <p class="muted">The original entry is immutable. A linked correction entry will preserve its date, currency, and method.</p>
-      <div class="form-grid"><label>Corrected amount (cents)<input type="number" min="1" formControlName="amountCents" required></label><label>Reason<input formControlName="reason" required></label></div>
-      <button class="button primary" type="submit" [disabled]="paymentCorrectionForm.invalid || loading">Save correction</button>
+    <section *ngIf="selectedPayment" class="account-card workspace-card" aria-label="Payment history">
+      <h3>Payment history</h3>
+      <p>
+        Original: {{ formatMoney(selectedPayment.amountCents, selectedPayment.currency) }}
+        · {{ selectedPayment.status }}
+        · Author: {{ selectedPayment.createdBy }}
+        · Date: {{ selectedPayment.createdAt | date:'medium':'UTC' }}
+      </p>
+      <ul *ngIf="selectedPayment.corrections.length">
+        <li *ngFor="let correction of selectedPayment.corrections">
+          Correction: {{ formatMoney(correction.amountCents, correction.currency) }}
+          <span *ngIf="correction.reason">— {{ correction.reason }}</span>
+          · Author: {{ correction.createdBy }}
+          · Date: {{ correction.createdAt | date:'medium':'UTC' }}
+        </li>
+      </ul>
+      <p *ngIf="selectedPayment.corrections.length === 0" class="muted">No corrections recorded.</p>
+      <form *ngIf="isAdmin && selectedPayment.status === 'RECORDED'" [formGroup]="paymentCorrectionForm" (ngSubmit)="correctPayment()">
+        <p class="muted">The original entry is immutable. A linked correction entry will preserve its date, currency, and method.</p>
+        <div class="form-grid"><label>Corrected amount (cents)<input type="number" min="1" formControlName="amountCents" required></label><label>Reason<input formControlName="reason" required></label></div>
+        <button class="button primary" type="submit" [disabled]="paymentCorrectionForm.invalid || loading">Save correction</button>
+      </form>
       <button class="button quiet" type="button" (click)="selectedPayment = null">Close</button>
-    </form>
+    </section>
   </section>
 
   <section *ngIf="activeTab === 'employees' && isAdmin" class="workspace-section">

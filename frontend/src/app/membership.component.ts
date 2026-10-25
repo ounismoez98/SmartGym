@@ -300,17 +300,31 @@ export class MembershipComponent implements OnInit {
     });
   }
 
+  openPayment(payment: Payment, forCorrection = false): void {
+    this.loading = true;
+    this.errorMessage = '';
+    this.api.getPayment(payment.id).subscribe({
+      next: (details) => this.loaded(() => {
+        this.selectedPayment = details;
+        if (forCorrection) {
+          this.paymentCorrectionForm.reset({ amountCents: details.amountCents, reason: '' });
+        }
+      }),
+      error: (error: unknown) => this.fail(error)
+    });
+  }
+
   choosePayment(payment: Payment): void {
-    this.selectedPayment = payment;
-    this.paymentCorrectionForm.reset({ amountCents: payment.amountCents, reason: '' });
+    this.openPayment(payment, true);
   }
 
   correctPayment(): void {
     if (!this.isAdmin || !this.selectedPayment || this.paymentCorrectionForm.invalid) return;
     const { amountCents, reason } = this.paymentCorrectionForm.getRawValue();
     this.mutate(this.api.correctPayment(this.selectedPayment.id, amountCents, reason), 'Payment correction recorded.', () => {
-      this.selectedPayment = null;
+      const correctedPayment = this.selectedPayment;
       this.loadPayments();
+      if (correctedPayment) this.openPayment(correctedPayment);
     });
   }
 

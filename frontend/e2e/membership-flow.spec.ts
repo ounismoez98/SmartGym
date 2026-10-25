@@ -86,6 +86,13 @@ test('admin manages membership and member access remains owner-scoped', async ({
       && response.request().method() === 'POST');
   await adminPage.getByRole('button', { name: 'Save correction', exact: true }).click();
   expect((await correctionResponsePromise).ok()).toBeTruthy();
+  const correctionHistory = adminPage.getByRole('region', { name: 'Payment history', exact: true })
+    .getByRole('listitem')
+    .filter({ hasText: 'E2E correction' });
+  await expect(correctionHistory).toContainText('Correction: 45.00 TND');
+  await expect(correctionHistory).toContainText('E2E correction');
+  await expect(correctionHistory).toContainText('Author:');
+  await expect(correctionHistory).toContainText('Date:');
 
   await adminPage.getByRole('button', { name: 'Assistant', exact: true }).click();
   await adminPage.getByRole('combobox', { name: 'Subscription', exact: true }).selectOption(subscription.id);
