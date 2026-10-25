@@ -5,7 +5,7 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/smartgym}
     username: ${SPRING_DATASOURCE_USERNAME:smartgym}
-    password: ${SPRING_DATASOURCE_PASSWORD:smartgym}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
