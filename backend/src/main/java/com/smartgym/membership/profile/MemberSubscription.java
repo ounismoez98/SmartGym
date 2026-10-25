@@ -103,9 +103,8 @@ public class MemberSubscription {
         return updatedAt;
     }
 
-    public void changePlan(UUID planId, Instant endsAt) {
+    public void changePlan(UUID planId) {
         this.planId = planId;
-        this.endsAt = endsAt;
         this.updatedAt = Instant.now();
     }
 

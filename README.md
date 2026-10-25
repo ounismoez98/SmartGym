@@ -236,15 +236,18 @@ exactly `http://localhost:8088`.
   coach. Keycloak accounts are not created or deactivated by these endpoints.
 - Subscription plan endpoints under `/api/membership/plans`: `POST`, `PUT`,
   and `DELETE` are ADMIN-only; paginated/filterable `GET` list and `GET /{id}`
-  are available to authenticated application roles. A plan referenced by
-  subscription history cannot be deleted; set `active` to `false` instead.
+  are available to authenticated application roles. Deactivate a plan with
+  `PUT /{id}` and `"active": false` (recommended); a plan referenced by
+  subscription history cannot be deleted.
 - Subscription endpoints under `/api/membership/subscriptions`: ADMIN creates,
   filters, updates, and cancels subscriptions; MEMBER can list and read only
   their own. Creation starts immediately and calculates `endsAt` from the
-  selected plan duration. `PUT /{id}` changes only `planId` and recalculates
-  `endsAt` from the original `startsAt`. `POST /{id}/cancel` requires a reason.
-  Only one ACTIVE subscription per member is allowed; a daily UTC task marks
-  due subscriptions EXPIRED. There is no subscription `DELETE` endpoint.
+  selected plan duration and requires an ACTIVE member. `PUT /{id}` changes
+  only `planId` on an ACTIVE subscription; `startsAt` and `endsAt` remain
+  unchanged, and the audit record contains the old and new plan IDs.
+  `POST /{id}/cancel` requires a reason. Only one ACTIVE subscription per
+  member is allowed; a daily UTC task marks due subscriptions EXPIRED, after
+  which a renewal can be created. There is no subscription `DELETE` endpoint.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in

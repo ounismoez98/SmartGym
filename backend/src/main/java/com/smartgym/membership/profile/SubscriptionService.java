@@ -132,13 +132,18 @@ public class SubscriptionService {
         if (!plan.isActive()) {
             throw conflict("An inactive subscription plan cannot be used.");
         }
-        Instant endsAt = addDuration(subscription.getStartsAt(), plan.getDurationDays());
-        if (!endsAt.isAfter(Instant.now())) {
-            throw conflict("The selected plan would make the active subscription already expired.");
-        }
-        subscription.changePlan(plan.getId(), endsAt);
+        UUID previousPlanId = subscription.getPlanId();
+        subscription.changePlan(plan.getId());
         subscriptionRepository.save(subscription);
-        audit(authentication, "SUBSCRIPTION_UPDATED", subscription, List.of("planId", "endsAt"));
+        auditLogRepository.save(new AuditLog(
+                SubscriptionPlanService.actor(authentication),
+                "SUBSCRIPTION_UPDATED",
+                "SUBSCRIPTION",
+                subscription.getId(),
+                Map.of(
+                        "memberId", subscription.getMemberId().toString(),
+                        "oldPlanId", previousPlanId.toString(),
+                        "newPlanId", plan.getId().toString())));
         return SubscriptionResponse.from(subscription);
     }
 

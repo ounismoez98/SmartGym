@@ -64,4 +64,8 @@ public class AuditLog {
     public UUID getEntityId() {
         return entityId;
     }
+
+    public Map<String, Object> getDetails() {
+        return details;
+    }
 }

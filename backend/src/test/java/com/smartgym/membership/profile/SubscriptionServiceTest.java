@@ -78,12 +78,30 @@ class SubscriptionServiceTest {
     }
 
     @Test
-    void updateChangesOnlyPlanAndRecalculatesEndDate() {
+    void createRejectsInactiveMember() {
+        UUID memberId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+        Member member = new Member(memberId, "member-sub", "member", "Member");
+        member.deactivate();
+        when(memberRepository.findById(memberId)).thenReturn(Optional.of(member));
+
+        assertThatThrownBy(() -> service.create(
+                        new SubscriptionCreateRequest(memberId, planId), authentication("admin", "ADMIN")))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+        verify(planRepository, never()).findById(any());
+        verify(subscriptionRepository, never()).save(any(MemberSubscription.class));
+    }
+
+    @Test
+    void updateChangesPlanWithoutChangingSubscriptionDatesAndAuditsBothPlans() {
         UUID subscriptionId = UUID.randomUUID();
+        UUID previousPlanId = UUID.randomUUID();
         UUID newPlanId = UUID.randomUUID();
         Instant startsAt = Instant.now().minusSeconds(60);
         MemberSubscription subscription = new MemberSubscription(
-                subscriptionId, UUID.randomUUID(), UUID.randomUUID(), startsAt, startsAt.plusSeconds(60));
+                subscriptionId, UUID.randomUUID(), previousPlanId, startsAt, startsAt.plusSeconds(60));
         when(subscriptionRepository.findById(subscriptionId)).thenReturn(Optional.of(subscription));
         when(planRepository.findById(newPlanId)).thenReturn(Optional.of(plan(newPlanId, 45, true)));
 
@@ -92,8 +110,31 @@ class SubscriptionServiceTest {
 
         assertThat(response.planId()).isEqualTo(newPlanId);
         assertThat(response.startsAt()).isEqualTo(startsAt);
-        assertThat(response.endsAt()).isEqualTo(startsAt.plusSeconds(45L * 24 * 60 * 60));
-        verify(auditLogRepository).save(any(AuditLog.class));
+        assertThat(response.endsAt()).isEqualTo(startsAt.plusSeconds(60));
+        verify(auditLogRepository).save(org.mockito.ArgumentMatchers.argThat(
+                audit -> audit.getAction().equals("SUBSCRIPTION_UPDATED")
+                        && audit.getDetails().get("oldPlanId").equals(previousPlanId.toString())
+                        && audit.getDetails().get("newPlanId").equals(newPlanId.toString())));
+    }
+
+    @Test
+    void updateRejectsNonActiveSubscription() {
+        UUID subscriptionId = UUID.randomUUID();
+        MemberSubscription subscription = new MemberSubscription(
+                subscriptionId, UUID.randomUUID(), UUID.randomUUID(),
+                Instant.now().minusSeconds(100), Instant.now().minusSeconds(50));
+        subscription.expire(Instant.now());
+        when(subscriptionRepository.findById(subscriptionId)).thenReturn(Optional.of(subscription));
+
+        assertThatThrownBy(() -> service.updatePlan(
+                        subscriptionId,
+                        new SubscriptionUpdateRequest(UUID.randomUUID()),
+                        authentication("admin", "ADMIN")))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+        verify(planRepository, never()).findById(any());
+        verify(subscriptionRepository, never()).save(any(MemberSubscription.class));
     }
 
     @Test
