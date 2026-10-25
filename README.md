@@ -347,16 +347,46 @@ The following are not yet delivered:
 
 Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
 Development sample plans and policies are loaded only by the `dev` profile.
+In the `dev` profile only, Flyway permits pending lower-numbered migrations to
+run after the development seed migration, allowing existing local volumes to
+receive migrations added after their initial seed.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
 payment deletion-guard tests. Testcontainers cases are skipped when Docker
 is unavailable. Angular unit tests cover membership API requests and route
-guards. There are no Angular E2E tests in the repository.
+guards. A Playwright E2E scenario covers the admin membership workflow,
+MailHog confirmation, and member ownership denial.
 
 Run the backend tests from the `backend` directory:
 
 ```powershell
 mvn -B test
+```
+
+The Playwright scenario uses the local Compose stack, MailHog, and a test-only
+mock OpenAI-compatible LLM; it does not contact Groq. Set the E2E credentials
+to the same local values used by `scripts/provision-dev.ps1`, then launch the
+test stack and install Chromium once:
+
+```powershell
+docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml up --build -d
+npx --prefix frontend playwright install chromium
+$env:E2E_ADMIN_USERNAME = "gym-admin"
+$env:E2E_ADMIN_PASSWORD = $env:DEV_ADMIN_PASSWORD
+$env:E2E_MEMBER_USERNAME = "member-a"
+$env:E2E_MEMBER_PASSWORD = $env:DEV_MEMBER_A_PASSWORD
+npm --prefix frontend run test:e2e
+```
+
+`DEV_ADMIN_PASSWORD` and `DEV_MEMBER_A_PASSWORD` must be loaded from the
+operator's local environment; do not put credentials in the repository. The
+E2E test creates a membership profile using a random Keycloak subject, since
+account creation is intentionally not part of the membership API. It then
+checks that the existing `member-a` identity receives `403` when requesting
+that profile. Stop the test stack without deleting local data with:
+
+```powershell
+docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml down
 ```
 
 Docker Desktop must be running for the Testcontainers PostgreSQL tests.
