@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.smartgym.membership.api.EmployeeCreateRequest;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -25,8 +26,9 @@ class EmployeeServiceTest {
     private final EmployeeRepository employeeRepository = mock(EmployeeRepository.class);
     private final CoachAssignmentRepository assignmentRepository = mock(CoachAssignmentRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final MembershipEventPublisher eventPublisher = mock(MembershipEventPublisher.class);
     private final EmployeeService service =
-            new EmployeeService(employeeRepository, assignmentRepository, auditLogRepository);
+            new EmployeeService(employeeRepository, assignmentRepository, auditLogRepository, eventPublisher);
 
     @Test
     void createRejectsDuplicateEmail() {

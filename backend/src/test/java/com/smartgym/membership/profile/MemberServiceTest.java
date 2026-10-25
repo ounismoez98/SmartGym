@@ -8,6 +8,7 @@ import com.smartgym.membership.api.MemberCreateRequest;
 import com.smartgym.membership.api.MemberUpdateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.security.AccessChecker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,9 @@ class MemberServiceTest {
     @Mock
     private AccessChecker accessChecker;
 
+    @Mock
+    private MembershipEventPublisher eventPublisher;
+
     private MemberService memberService;
 
     @BeforeEach
@@ -52,7 +56,8 @@ class MemberServiceTest {
                 assignmentRepository,
                 subscriptionRepository,
                 auditLogRepository,
-                accessChecker);
+                accessChecker,
+                eventPublisher);
     }
 
     @Test

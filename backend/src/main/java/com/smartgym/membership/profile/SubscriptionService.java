@@ -15,6 +15,7 @@ import com.smartgym.membership.api.SubscriptionResponse;
 import com.smartgym.membership.api.SubscriptionUpdateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.security.AccessChecker;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -35,18 +36,21 @@ public class SubscriptionService {
     private final MemberSubscriptionRepository subscriptionRepository;
     private final AuditLogRepository auditLogRepository;
     private final AccessChecker accessChecker;
+    private final MembershipEventPublisher eventPublisher;
 
     public SubscriptionService(
             MemberRepository memberRepository,
             SubscriptionPlanRepository planRepository,
             MemberSubscriptionRepository subscriptionRepository,
             AuditLogRepository auditLogRepository,
-            AccessChecker accessChecker) {
+            AccessChecker accessChecker,
+            MembershipEventPublisher eventPublisher) {
         this.memberRepository = memberRepository;
         this.planRepository = planRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.auditLogRepository = auditLogRepository;
         this.accessChecker = accessChecker;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -118,6 +122,7 @@ public class SubscriptionService {
         MemberSubscription subscription = subscriptionRepository.save(new MemberSubscription(
                 UUID.randomUUID(), member.getId(), plan.getId(), startsAt, endsAt));
         audit(authentication, "SUBSCRIPTION_CREATED", subscription, List.of("memberId", "planId", "startsAt", "endsAt", "status"));
+        eventPublisher.publish("subscription.created", subscriptionEventData(subscription));
         return SubscriptionResponse.from(subscription);
     }
 
@@ -156,6 +161,7 @@ public class SubscriptionService {
         subscription.cancel(request.reason().trim(), Instant.now());
         subscriptionRepository.save(subscription);
         audit(authentication, "SUBSCRIPTION_CANCELLED", subscription, List.of("status", "cancelledAt", "cancelReason"));
+        eventPublisher.publish("subscription.cancelled", subscriptionEventData(subscription));
         return SubscriptionResponse.from(subscription);
     }
 
@@ -165,6 +171,7 @@ public class SubscriptionService {
             subscription.expire(now);
             subscriptionRepository.save(subscription);
             auditSystem("SUBSCRIPTION_EXPIRED", subscription);
+            eventPublisher.publish("subscription.expired", subscriptionEventData(subscription));
         }
         return dueSubscriptions.size();
     }
@@ -191,6 +198,16 @@ public class SubscriptionService {
                 "SUBSCRIPTION",
                 subscription.getId(),
                 Map.of("memberId", subscription.getMemberId().toString(), "fields", List.of("status"))));
+    }
+
+    private static Map<String, Object> subscriptionEventData(MemberSubscription subscription) {
+        return Map.of(
+                "subscriptionId", subscription.getId().toString(),
+                "memberId", subscription.getMemberId().toString(),
+                "planId", subscription.getPlanId().toString(),
+                "status", subscription.getStatus().name(),
+                "startsAt", subscription.getStartsAt().toString(),
+                "endsAt", subscription.getEndsAt().toString());
     }
 
     private boolean isAdmin(Authentication authentication) {

@@ -10,6 +10,7 @@ import com.smartgym.membership.api.MemberResponse;
 import com.smartgym.membership.api.MemberUpdateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.security.AccessChecker;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -33,18 +34,21 @@ public class MemberService {
     private final MemberSubscriptionRepository subscriptionRepository;
     private final AuditLogRepository auditLogRepository;
     private final AccessChecker accessChecker;
+    private final MembershipEventPublisher eventPublisher;
 
     public MemberService(
             MemberRepository memberRepository,
             CoachAssignmentRepository assignmentRepository,
             MemberSubscriptionRepository subscriptionRepository,
             AuditLogRepository auditLogRepository,
-            AccessChecker accessChecker) {
+            AccessChecker accessChecker,
+            MembershipEventPublisher eventPublisher) {
         this.memberRepository = memberRepository;
         this.assignmentRepository = assignmentRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.auditLogRepository = auditLogRepository;
         this.accessChecker = accessChecker;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +110,8 @@ public class MemberService {
                 "MEMBER_CREATED",
                 member.getId(),
                 List.of("keycloakUserId", "firstName", "lastName", "email", "phone", "birthDate")));
+        eventPublisher.publish("member.created", Map.of(
+                "memberId", member.getId().toString(), "status", member.getStatus().name()));
         return MemberResponse.from(member);
     }
 
@@ -141,6 +147,7 @@ public class MemberService {
         }
         memberRepository.save(member);
         auditLogRepository.save(audit(authentication, "MEMBER_UPDATED", id, suppliedFields));
+        eventPublisher.publish("member.updated", Map.of("memberId", id.toString(), "status", member.getStatus().name()));
         return MemberResponse.from(member);
     }
 
@@ -153,6 +160,7 @@ public class MemberService {
         member.deactivate();
         memberRepository.save(member);
         auditLogRepository.save(audit(authentication, "MEMBER_DEACTIVATED", id, List.of("status")));
+        eventPublisher.publish("member.deactivated", Map.of("memberId", id.toString(), "status", member.getStatus().name()));
         return MemberResponse.from(member);
     }
 

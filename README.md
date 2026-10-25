@@ -259,6 +259,10 @@ exactly `http://localhost:8088`.
   /api/membership/members/{id}/payments/total` returns the sum of `RECORDED`
   amounts for ADMIN or that member. There are no payment `PUT` or `DELETE`
   endpoints.
+- Membership, employee, subscription, and payment changes publish the event
+  types documented in [docs/events.md](docs/events.md) to RabbitMQ after
+  commit. Delivery is best effort; failed broker publication is logged and is
+  not retried.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in
@@ -320,8 +324,7 @@ delivered.
 
 The following are not yet delivered:
 
-- Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
-  only.
+- Application RabbitMQ consumers.
 - The administrative LLM assistant. Groq configuration is prepared, but the
   API does not call an LLM yet.
 - SMTP password recovery and production HTTPS.

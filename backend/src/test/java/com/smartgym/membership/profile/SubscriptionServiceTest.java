@@ -10,6 +10,7 @@ import com.smartgym.membership.api.SubscriptionCreateRequest;
 import com.smartgym.membership.api.SubscriptionUpdateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.security.AccessChecker;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -32,8 +33,9 @@ class SubscriptionServiceTest {
     private final MemberSubscriptionRepository subscriptionRepository = mock(MemberSubscriptionRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final AccessChecker accessChecker = mock(AccessChecker.class);
+    private final MembershipEventPublisher eventPublisher = mock(MembershipEventPublisher.class);
     private final SubscriptionService service = new SubscriptionService(
-            memberRepository, planRepository, subscriptionRepository, auditLogRepository, accessChecker);
+            memberRepository, planRepository, subscriptionRepository, auditLogRepository, accessChecker, eventPublisher);
 
     @Test
     void createCalculatesEndDateAndAudits() {

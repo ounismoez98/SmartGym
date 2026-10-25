@@ -12,6 +12,7 @@ import com.smartgym.membership.api.EmployeeResponse;
 import com.smartgym.membership.api.EmployeeUpdateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -31,14 +32,17 @@ public class EmployeeService {
     private final EmployeeRepository employeeRepository;
     private final CoachAssignmentRepository assignmentRepository;
     private final AuditLogRepository auditLogRepository;
+    private final MembershipEventPublisher eventPublisher;
 
     public EmployeeService(
             EmployeeRepository employeeRepository,
             CoachAssignmentRepository assignmentRepository,
-            AuditLogRepository auditLogRepository) {
+            AuditLogRepository auditLogRepository,
+            MembershipEventPublisher eventPublisher) {
         this.employeeRepository = employeeRepository;
         this.assignmentRepository = assignmentRepository;
         this.auditLogRepository = auditLogRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -99,6 +103,8 @@ public class EmployeeService {
         employeeRepository.save(employee);
         audit(authentication, "EMPLOYEE_CREATED", "EMPLOYEE", employee.getId(),
                 List.of("keycloakUserId", "firstName", "lastName", "email", "jobTitle", "hireDate"));
+        eventPublisher.publish("employee.created", Map.of(
+                "employeeId", employee.getId().toString(), "status", employee.getStatus().name()));
         return EmployeeResponse.from(employee);
     }
 
@@ -128,6 +134,7 @@ public class EmployeeService {
         employee.deactivate();
         employeeRepository.save(employee);
         audit(authentication, "EMPLOYEE_DEACTIVATED", "EMPLOYEE", id, List.of("status"));
+        eventPublisher.publish("employee.deactivated", Map.of("employeeId", id.toString(), "status", employee.getStatus().name()));
         return EmployeeResponse.from(employee);
     }
 

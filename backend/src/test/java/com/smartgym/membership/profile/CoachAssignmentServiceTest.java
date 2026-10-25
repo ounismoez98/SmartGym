@@ -4,6 +4,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -23,8 +24,9 @@ class CoachAssignmentServiceTest {
     private final MemberRepository memberRepository = mock(MemberRepository.class);
     private final CoachAssignmentRepository assignmentRepository = mock(CoachAssignmentRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+    private final MembershipEventPublisher eventPublisher = mock(MembershipEventPublisher.class);
     private final EmployeeService employeeService =
-            new EmployeeService(employeeRepository, assignmentRepository, auditLogRepository);
+            new EmployeeService(employeeRepository, assignmentRepository, auditLogRepository, eventPublisher);
     private final CoachAssignmentService service = new CoachAssignmentService(
             employeeService, memberRepository, assignmentRepository, auditLogRepository);
 

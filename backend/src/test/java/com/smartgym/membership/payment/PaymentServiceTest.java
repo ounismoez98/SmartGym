@@ -9,6 +9,7 @@ import com.smartgym.membership.api.PaymentCorrectionRequest;
 import com.smartgym.membership.api.PaymentCreateRequest;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
 import com.smartgym.membership.profile.MemberSubscription;
@@ -35,8 +36,9 @@ class PaymentServiceTest {
     private final MemberSubscriptionRepository subscriptionRepository = mock(MemberSubscriptionRepository.class);
     private final AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
     private final AccessChecker accessChecker = mock(AccessChecker.class);
+    private final MembershipEventPublisher eventPublisher = mock(MembershipEventPublisher.class);
     private final PaymentService service = new PaymentService(
-            paymentRepository, memberRepository, subscriptionRepository, auditLogRepository, accessChecker);
+            paymentRepository, memberRepository, subscriptionRepository, auditLogRepository, accessChecker, eventPublisher);
 
     @Test
     void createUsesDefaultCurrencyAndAuditsActor() {

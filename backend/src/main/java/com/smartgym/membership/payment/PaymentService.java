@@ -14,6 +14,7 @@ import com.smartgym.membership.api.PaymentResponse;
 import com.smartgym.membership.api.PaymentTotalResponse;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.events.MembershipEventPublisher;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
 import com.smartgym.membership.profile.MemberSubscription;
@@ -41,18 +42,21 @@ public class PaymentService {
     private final MemberSubscriptionRepository subscriptionRepository;
     private final AuditLogRepository auditLogRepository;
     private final AccessChecker accessChecker;
+    private final MembershipEventPublisher eventPublisher;
 
     public PaymentService(
             PaymentRepository paymentRepository,
             MemberRepository memberRepository,
             MemberSubscriptionRepository subscriptionRepository,
             AuditLogRepository auditLogRepository,
-            AccessChecker accessChecker) {
+            AccessChecker accessChecker,
+            MembershipEventPublisher eventPublisher) {
         this.paymentRepository = paymentRepository;
         this.memberRepository = memberRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.auditLogRepository = auditLogRepository;
         this.accessChecker = accessChecker;
+        this.eventPublisher = eventPublisher;
     }
 
     public PaymentResponse create(PaymentCreateRequest request, Authentication authentication) {
@@ -92,6 +96,7 @@ public class PaymentService {
                         "amountCents", payment.getAmountCents(),
                         "currency", payment.getCurrency().trim(),
                         "paidAt", payment.getPaidAt().toString())));
+        eventPublisher.publish("payment.recorded", paymentEventData(payment));
         return toResponse(payment, false);
     }
 
@@ -182,6 +187,13 @@ public class PaymentService {
                         "oldAmountCents", original.getAmountCents(),
                         "newAmountCents", correction.getAmountCents(),
                         "reason", correction.getReason())));
+        eventPublisher.publish("payment.corrected", Map.of(
+                "paymentId", original.getId().toString(),
+                "correctionPaymentId", correction.getId().toString(),
+                "memberId", correction.getMemberId().toString(),
+                "oldAmountCents", original.getAmountCents(),
+                "newAmountCents", correction.getAmountCents(),
+                "status", original.getStatus().name()));
         return toResponse(correction, false);
     }
 
@@ -212,6 +224,16 @@ public class PaymentService {
             return jwt.getSubject();
         }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication is required.");
+    }
+
+    private static Map<String, Object> paymentEventData(Payment payment) {
+        return Map.of(
+                "paymentId", payment.getId().toString(),
+                "memberId", payment.getMemberId().toString(),
+                "amountCents", payment.getAmountCents(),
+                "currency", payment.getCurrency().trim(),
+                "status", payment.getStatus().name(),
+                "paidAt", payment.getPaidAt().toString());
     }
 
     private static void validatePage(int page, int size) {
