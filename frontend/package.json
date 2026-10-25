@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "start": "ng serve",
-    "build": "ng build"
+    "build": "ng build",
+    "test": "ng test --watch=false",
+    "test:coverage": "ng test --watch=false --code-coverage"
   },
   "dependencies": {
     "@angular/common": "^20.2.0",
@@ -22,6 +24,12 @@
     "@angular/build": "^20.2.0",
     "@angular/cli": "^20.2.0",
     "@angular/compiler-cli": "^20.2.0",
+    "@types/jasmine": "^4.6.6",
+    "jasmine-core": "^4.6.1",
+    "karma": "^6.4.4",
+    "karma-chrome-launcher": "^3.2.0",
+    "karma-coverage": "^2.2.1",
+    "karma-jasmine": "^5.1.0",
     "typescript": "~5.9.2"
   }
 }

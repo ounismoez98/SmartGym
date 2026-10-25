@@ -280,10 +280,25 @@ docker compose build frontend
 # Build the API and frontend images without restarting running services.
 docker compose build api frontend
 
+# Install frontend dependencies and run Angular unit/component tests.
+$frontend = (Resolve-Path .\frontend).Path
+docker run --rm --mount "type=bind,source=$frontend,target=/app" `
+  -w /app node:24-bookworm-slim sh -c "apt-get update && apt-get install -y --no-install-recommends chromium && npm ci && CHROME_BIN=/usr/bin/chromium npm test"
+
+# Run the same tests and generate HTML plus text-summary coverage.
+docker run --rm --mount "type=bind,source=$frontend,target=/app" `
+  -w /app node:24-bookworm-slim sh -c "apt-get update && apt-get install -y --no-install-recommends chromium && npm ci && CHROME_BIN=/usr/bin/chromium npm run test:coverage"
+
 # Inspect service state and follow logs.
 docker compose ps
 docker compose logs -f api frontend
 ```
+
+The frontend's Angular test target uses Karma, Jasmine, and headless Chromium.
+For local execution, use Node.js 24, run `npm ci` from `frontend`, and ensure
+Chrome or Chromium is installed; set `CHROME_BIN` to its executable path on
+Linux. `npm test` runs the tests once. `npm run test:coverage` writes the HTML
+report to `frontend/coverage/smart-gym/index.html` and prints a text summary.
 
 To generate backend line/branch coverage, run `mvn -B test jacoco:report`
 from `backend`. The HTML report is written to `target/site/jacoco/index.html`;
@@ -296,17 +311,46 @@ docker run --rm --mount "type=bind,source=$backend,target=/workspace" `
   -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test jacoco:report
 ```
 
-Latest backend test and coverage run (2026-10-24): `mvn -B test jacoco:report`
-completed 48 tests with 0 failures, 0 errors, and 0 skipped. JaCoCo measured
-89.02% line coverage (900/1,011) and 58.85% branch coverage (369/627) across
-application classes. Before the additional white-box tests, the baseline was
-86.84% line (878/1,011) and 57.42% branch (360/627). The test profile uses
-H2; these results do not verify live PostgreSQL persistence, Keycloak token
-validation, or Groq inference.
+The opt-in `PostgresNutritionIntegrationTest` requires an isolated PostgreSQL
+database named `smartgym_it` and username `smartgym_it`. It is skipped unless
+`smartgym.postgres.it.url`, `.username`, and `.password` system properties are
+provided. Never point these properties at the development or production
+database. It runs Flyway against the supplied database; tests inspect data,
+update and delete only their own rows, and verify migration behavior.
 
-`frontend/package.json` currently has no test script and the frontend test
-suite is not configured. For local host builds, the backend requires Java 21
-and Maven; the frontend requires the Node/npm versions in its Dockerfile.
+Latest backend test and coverage run (2026-10-24) used all existing H2 tests
+plus the opt-in PostgreSQL tests against a disposable PostgreSQL 16 container:
+55 tests, 0 failures, 0 errors, and 0 skipped. JaCoCo measured 89.32% line
+coverage (903/1,011), 58.85% branch coverage (369/627), and 90.05% instruction
+coverage (5,396/5,992) across application classes. The preceding Phase 2 run
+was 48 tests, 0 failures, 0 errors, and 0 skipped, with 89.02% line and
+58.85% branch coverage. PostgreSQL integration tests do not verify the
+running Compose API, Keycloak token validation, or Groq inference.
+
+The frontend test suite is configured and runs with mocked HTTP and
+authentication dependencies; it does not call the live API, Keycloak, or
+Groq. The production frontend build remains `npm run build`. For local host
+builds, the backend requires Java 21 and Maven; the frontend requires Node.js
+24 and npm.
+
+Latest frontend verification (2026-10-24): `npm ci` followed by
+`CHROME_BIN=/usr/bin/chromium npm run test:coverage` in Node.js 24 with
+headless Chromium executed 37 tests: 37 passed, 0 failed, 0 skipped. Coverage
+was 68.54% statements (329/480), 47.34% branches (89/188), 69.59% functions
+(119/171), and 70.07% lines (295/421). The HTML report is
+`frontend/coverage/smart-gym/index.html`. The frontend production build
+(`npm run build`) also passed. These are frontend unit/component and mocked
+authentication checks, not live browser-to-Keycloak or API end-to-end tests.
+
+### Performance and load checks
+
+Reproducible k6 scripts for read-only API baseline/concurrency, expected
+unauthenticated errors, gated read-only ramp testing, and separately gated
+single-request Groq latency are in [`performance/`](./performance/README.md).
+The only available Compose stack during setup was the running development
+stack, backed by the `smartgym` database; it was not used for load testing.
+Actual performance results remain blocked until the dedicated isolated API,
+database, and Keycloak test identity described in that guide are available.
 
 ### Module status and limitations
 
@@ -333,12 +377,11 @@ and Maven; the frontend requires the Node/npm versions in its Dockerfile.
   records. Preparation text is stored in each record description; the
   shopping list and alternatives are not persisted.
 - No Groq API key has been configured or verified for inference. Live
-  Keycloak-backed Nutrition browser/API integration and
-  end-to-end persistence against PostgreSQL have not been verified as part of
-  the Step 8 overall verification. The separate login smoke-check notes below
-  do not verify these Module 4 workflows. Automated backend tests use the
-  configured test database and do not establish those live integration
-  results.
+  Keycloak-backed Nutrition browser/API integration and end-to-end persistence
+  through the running Compose API have not been verified. The separate login
+  smoke-check notes below do not verify these Module 4 workflows. Automated
+  PostgreSQL tests use a disposable database and do not establish those live
+  integration results.
 - Step 8 verification ran the full backend suite: 37 tests, 0 failures,
   0 errors, and 0 skipped; backend packaging, the Angular production build,
   Compose validation, and API/frontend image builds passed. Step 9's

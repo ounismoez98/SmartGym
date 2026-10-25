@@ -185,6 +185,15 @@ class PostgresNutritionIntegrationTest {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Missing dedicated PostgreSQL integration property: " + name);
         }
+        if (name.equals("smartgym.postgres.it.url")
+                && !value.matches("jdbc:postgresql:.*?/smartgym_it(?:\\?.*)?")) {
+            throw new IllegalStateException(
+                    "PostgreSQL integration tests require the dedicated smartgym_it database name.");
+        }
+        if (name.equals("smartgym.postgres.it.username") && !value.equals("smartgym_it")) {
+            throw new IllegalStateException(
+                    "PostgreSQL integration tests require the dedicated smartgym_it database user.");
+        }
         return value;
     }
 }
