@@ -12,6 +12,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -81,6 +82,13 @@ public class GroqLlmClient implements LlmClient {
                 }
                 throw new ResponseStatusException(
                         HttpStatusCode.valueOf(502), "LLM provider is unavailable.");
+            } catch (RestClientException exception) {
+                if (hasTimeout(exception)) {
+                    throw new ResponseStatusException(
+                            HttpStatusCode.valueOf(504), "LLM provider request timed out.");
+                }
+                throw new ResponseStatusException(
+                        HttpStatusCode.valueOf(502), "LLM provider returned an invalid response.");
             }
         }
         throw new ResponseStatusException(
