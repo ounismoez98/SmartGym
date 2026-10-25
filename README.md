@@ -248,6 +248,17 @@ exactly `http://localhost:8088`.
   `POST /{id}/cancel` requires a reason. Only one ACTIVE subscription per
   member is allowed; a daily UTC task marks due subscriptions EXPIRED, after
   which a renewal can be created. There is no subscription `DELETE` endpoint.
+- Payment endpoints under `/api/membership/payments`: `POST` recording and
+  `POST /{id}/corrections` are ADMIN-only; paginated
+  `GET` list (filters: `memberId`, `status`, `from`, `to`, `page`, `size`) and
+  `GET /{id}` are available to ADMIN or the owning MEMBER. A payment may omit
+  `subscriptionId`; when supplied, it must belong to `memberId`. Correction
+  creates a linked `RECORDED` entry, marks the original `CORRECTED` without
+  changing its amount, and preserves the payment date, currency, and method.
+  Detail responses include the correction chain. `GET
+  /api/membership/members/{id}/payments/total` returns the sum of `RECORDED`
+  amounts for ADMIN or that member. There are no payment `PUT` or `DELETE`
+  endpoints.
 - The development-only profile provisioning endpoint is absent unless the
   Spring `dev` profile is enabled and additionally requires the
   `PROVISIONING_TOKEN`. Do not enable that profile or expose that endpoint in
@@ -303,15 +314,14 @@ The delivered scope is the Keycloak-backed authentication and authorization
 vertical slice: Angular sign-in and route guards, the Spring membership
 identity API, role checks, member ownership checks, and development profile
 provisioning, member and employee CRUD, and coach assignments. The SPA module
-pages are placeholders; subscription plan and subscription management are
-also delivered. Payment management and business CRUD for the other modules
-are not delivered.
+pages are placeholders; subscription plan, subscription, and payment
+management are also delivered. Business CRUD for the other modules is not
+delivered.
 
 The following are not yet delivered:
 
 - Application RabbitMQ events or consumers. RabbitMQ is deployed in Compose
   only.
-- Payment recording and correction workflows.
 - The administrative LLM assistant. Groq configuration is prepared, but the
   API does not call an LLM yet.
 - SMTP password recovery and production HTTPS.
@@ -320,8 +330,8 @@ Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
 Development sample plans and policies are loaded only by the `dev` profile.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
-deletion-guard tests. Testcontainers cases are skipped when Docker is
-unavailable. There are no Angular E2E tests in the repository.
+payment deletion-guard tests. Testcontainers cases are skipped when Docker
+is unavailable. There are no Angular E2E tests in the repository.
 
 Run the backend tests from the `backend` directory:
 

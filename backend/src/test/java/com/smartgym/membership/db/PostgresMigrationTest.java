@@ -47,7 +47,7 @@ class PostgresMigrationTest {
         assertThat(jdbc.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .contains("1", "2", "3", "4", "100");
+                .contains("1", "2", "3", "4", "5", "100");
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM subscription_plan", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(1);
@@ -73,15 +73,35 @@ class PostgresMigrationTest {
                         + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')",
                 subscriptionId, memberId, planId);
         jdbc.update(
-                "INSERT INTO payment (id, subscription_id, amount_cents, currency, method, created_by) "
-                        + "VALUES (?, ?, ?, ?, ?, ?)",
-                paymentId, subscriptionId, 1000L, "EUR", "CARD", "migration-test");
+                "INSERT INTO payment (id, member_id, subscription_id, amount_cents, currency, method, created_by) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                paymentId, memberId, subscriptionId, 1000L, "EUR", "CARD", "migration-test");
 
         assertThatThrownBy(() -> jdbc.update("DELETE FROM payment WHERE id = ?", paymentId))
                 .isInstanceOf(DataAccessException.class);
         assertThat(jdbc.queryForObject(
                 "SELECT status FROM payment WHERE id = ?", String.class, paymentId))
                 .isEqualTo("RECORDED");
+    }
+
+    @Test
+    void allowsPaymentsWithoutSubscription() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        UUID memberId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO member (id, keycloak_user_id, username, display_name) VALUES (?, ?, ?, ?)",
+                memberId, "optional-subscription-" + memberId, "optional-subscription", "Optional Subscription");
+        jdbc.update(
+                "INSERT INTO payment (id, member_id, amount_cents, currency, method, created_by) "
+                        + "VALUES (?, ?, ?, ?, ?, ?)",
+                paymentId, memberId, 1000L, "TND", "CASH", "migration-test");
+
+        assertThat(jdbc.queryForObject(
+                "SELECT subscription_id FROM payment WHERE id = ?", UUID.class, paymentId)).isNull();
+        assertThat(jdbc.queryForObject(
+                "SELECT paid_at FROM payment WHERE id = ?", java.time.OffsetDateTime.class, paymentId))
+                .isNotNull();
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
 import com.smartgym.membership.profile.MemberSubscription;
 import com.smartgym.membership.profile.MemberSubscriptionRepository;
+import com.smartgym.membership.payment.PaymentRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
@@ -20,16 +21,19 @@ public class AccessChecker {
     private final CoachAssignmentRepository assignmentRepository;
     private final EmployeeRepository employeeRepository;
     private final MemberSubscriptionRepository subscriptionRepository;
+    private final PaymentRepository paymentRepository;
 
     public AccessChecker(
             MemberRepository memberRepository,
             CoachAssignmentRepository assignmentRepository,
             EmployeeRepository employeeRepository,
-            MemberSubscriptionRepository subscriptionRepository) {
+            MemberSubscriptionRepository subscriptionRepository,
+            PaymentRepository paymentRepository) {
         this.memberRepository = memberRepository;
         this.assignmentRepository = assignmentRepository;
         this.employeeRepository = employeeRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     public boolean isOwner(UUID memberId, Authentication authentication) {
@@ -74,6 +78,19 @@ public class AccessChecker {
         }
         return subscriptionRepository.findById(subscriptionId)
                 .map(MemberSubscription::getMemberId)
+                .map(memberId -> memberRepository.findById(memberId)
+                        .map(Member::getKeycloakUserId)
+                        .filter(subject -> normalize(subject).equals(normalize(jwt.getSubject())))
+                        .isPresent())
+                .orElse(false);
+    }
+
+    public boolean isPaymentOwner(UUID paymentId, Authentication authentication) {
+        if (!hasRole(authentication, "ROLE_MEMBER") || !(authentication.getPrincipal() instanceof Jwt jwt)) {
+            return false;
+        }
+        return paymentRepository.findById(paymentId)
+                .map(com.smartgym.membership.payment.Payment::getMemberId)
                 .map(memberId -> memberRepository.findById(memberId)
                         .map(Member::getKeycloakUserId)
                         .filter(subject -> normalize(subject).equals(normalize(jwt.getSubject())))
