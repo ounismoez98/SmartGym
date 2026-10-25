@@ -3,7 +3,10 @@ package com.smartgym.training.api;
 import java.util.UUID;
 
 import com.smartgym.training.application.WorkoutService;
+import com.smartgym.training.application.WorkoutInsightService;
 import com.smartgym.training.dto.ProgressResponse;
+import com.smartgym.training.dto.WorkoutInsightRequest;
+import com.smartgym.training.dto.WorkoutInsightResponse;
 import com.smartgym.training.dto.WorkoutLogPageResponse;
 import com.smartgym.training.dto.WorkoutLogPatchRequest;
 import com.smartgym.training.dto.WorkoutLogRequest;
@@ -32,9 +35,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/training")
 public class WorkoutController {
     private final WorkoutService service;
+    private final WorkoutInsightService insightService;
 
-    public WorkoutController(WorkoutService service) {
+    public WorkoutController(WorkoutService service, WorkoutInsightService insightService) {
         this.service = service;
+        this.insightService = insightService;
     }
 
     @PostMapping("/workout-logs")
@@ -81,6 +86,14 @@ public class WorkoutController {
     @PreAuthorize("hasRole('MEMBER')")
     public ProgressResponse myProgress(@AuthenticationPrincipal Jwt jwt) {
         return service.myProgress(jwt);
+    }
+
+    @PostMapping("/me/workout-insights")
+    @PreAuthorize("hasRole('MEMBER')")
+    public WorkoutInsightResponse myWorkoutInsights(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody WorkoutInsightRequest request) {
+        return insightService.answer(jwt, request);
     }
 
     @GetMapping("/members/{memberId}/progress")

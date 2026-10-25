@@ -175,6 +175,11 @@ public class TrainingProgramme {
         status = ProgrammeStatus.DRAFT;
     }
 
+    public void markAiGenerated(UUID jobId) {
+        origin = ProgrammeOrigin.AI;
+        sourceAiJobId = jobId;
+    }
+
     public void submitForReview() {
         status = ProgrammeStatus.PENDING_REVIEW;
     }
@@ -211,6 +216,7 @@ public class TrainingProgramme {
     public int getRevision() { return revision; }
     public Integer getApprovedRevision() { return approvedRevision; }
     public String getCreatedBySubject() { return createdBySubject; }
+    public UUID getSourceAiJobId() { return sourceAiJobId; }
     public UUID getSupersedesProgrammeId() { return supersedesProgrammeId; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
