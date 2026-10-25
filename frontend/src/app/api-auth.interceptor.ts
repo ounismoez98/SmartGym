@@ -4,7 +4,7 @@ import { Router } from '@angular/router';
 import { catchError, from, switchMap, throwError } from 'rxjs';
 import { AuthService } from './auth.service';
 
-const apiPath = /^\/api\/(membership|courses|training|nutrition)(\/|$)/;
+const apiPath = /^\/api\/(membership|courses|training|nutrition|feedback)(\/|$)/;
 
 function isApprovedBusinessApi(url: string): boolean {
   try {

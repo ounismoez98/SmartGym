@@ -62,10 +62,13 @@ import { AssignedMember, MembershipApiService, MembershipIdentity } from './memb
         @if (auth.hasAnyRole(['ADMIN'])) {
           <section class="admin-note">
             <strong>Administration &amp; operations</strong>
-            <p>Your ADMIN role enables protected administration and operations.</p>
-            <button class="button quiet" type="button" (click)="checkAdminOperations()">Check operations access</button>
+            <p>Your ADMIN role enables protected administration, operations, and satisfaction analytics.</p>
+            <div style="display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap;">
+              <button class="button quiet" type="button" (click)="checkAdminOperations()">Check operations access</button>
+              <a class="button primary" routerLink="/feedback" style="margin-top: 0;">Satisfaction Analytics &amp; AI →</a>
+            </div>
             @if (operationsStatus) {
-              <p>Operations status: <strong>{{ operationsStatus.status }}</strong></p>
+              <p style="margin-top: 12px;">Operations status: <strong>{{ operationsStatus.status }}</strong></p>
               <p>Enabled areas: {{ operationsStatus.enabledModuleAreas.join(', ') }}</p>
             }
             @if (operationsError) { <p class="notice error" role="alert">{{ operationsError }}</p> }
@@ -91,6 +94,7 @@ import { AssignedMember, MembershipApiService, MembershipIdentity } from './memb
           <section class="admin-note">
             <strong>Your member account</strong>
             <p>Membership reservations and your training and nutrition areas are linked to your own profile.</p>
+            <a class="button primary" routerLink="/feedback" style="margin-top: 12px; display: inline-flex;">Submit Feedback &amp; View History →</a>
           </section>
         }
       </main>
@@ -111,7 +115,8 @@ export class DashboardComponent {
     { code: 'M1', title: 'Membership', description: 'Your membership, reservations, and assigned members.', route: '/membership', roles: ['ADMIN', 'COACH', 'MEMBER'] },
     { code: 'M2', title: 'Courses', description: 'Courses and class schedules for your gym.', route: '/courses', roles: ['ADMIN', 'COACH', 'MEMBER'] },
     { code: 'M3', title: 'Training', description: 'Training plans and coaching workspace.', route: '/training', roles: ['ADMIN', 'COACH', 'MEMBER'] },
-    { code: 'M4', title: 'Nutrition', description: 'Nutrition plans and member resources.', route: '/nutrition', roles: ['ADMIN', 'MEMBER'] }
+    { code: 'M4', title: 'Nutrition', description: 'Nutrition plans and member resources.', route: '/nutrition', roles: ['ADMIN', 'MEMBER'] },
+    { code: 'F1', title: 'Feedback & Satisfaction', description: 'AI-classified feedback, satisfaction scoring, and member insights.', route: '/feedback', roles: ['ADMIN', 'COACH', 'MEMBER'] }
   ].filter((module) => this.auth.hasAnyRole(module.roles));
 
   constructor() {

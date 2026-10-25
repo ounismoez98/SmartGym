@@ -40,6 +40,7 @@
         "http://localhost:8088/courses",
         "http://localhost:8088/training",
         "http://localhost:8088/nutrition",
+        "http://localhost:8088/feedback",
         "http://localhost:8088/forbidden",
         "http://localhost:8088/not-found",
         "http://localhost:8088/silent-check-sso.html"
@@ -49,12 +50,7 @@
         "post.logout.redirect.uris": "http://localhost:8088/",
         "pkce.code.challenge.method": "S256"
       },
-      "defaultClientScopes": [
-        "roles",
-        "profile",
-        "email",
-        "api-audience"
-      ]
+      "defaultClientScopes": ["roles", "profile", "email", "api-audience"]
     }
   ],
   "clientScopes": [

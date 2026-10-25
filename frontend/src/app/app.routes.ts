@@ -3,6 +3,7 @@ import { authGuard, roleGuard } from './route.guards';
 import { DashboardComponent } from './dashboard.component';
 import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
+import { FeedbackComponent } from './feedback.component';
 import { MessagePageComponent } from './message-page.component';
 
 const moduleRoles = ['ADMIN', 'COACH', 'MEMBER'];
@@ -33,6 +34,11 @@ export const appRoutes: Routes = [
     component: ModuleComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Nutrition', module: 'M4', description: 'Nutrition plans and member resources.', roles: moduleRoles }
+  },
+  {
+    path: 'feedback',
+    component: FeedbackComponent,
+    canActivate: [authGuard]
   },
   { path: 'forbidden', component: MessagePageComponent, data: { title: 'Access denied', message: 'Your account does not have permission to view this page.' } },
   { path: 'not-found', component: MessagePageComponent, data: { title: 'Page not found', message: 'The page you requested does not exist.' } },
