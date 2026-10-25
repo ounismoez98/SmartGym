@@ -11,7 +11,7 @@ public record SubscriptionPlanResponse(
         String name,
         String conditions,
         int durationDays,
-        long priceCents,
+        Long priceCents,
         String currency,
         boolean active,
         Instant createdAt,

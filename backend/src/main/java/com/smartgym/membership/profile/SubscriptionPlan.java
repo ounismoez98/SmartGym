@@ -28,7 +28,7 @@ public class SubscriptionPlan {
     private int durationDays;
 
     @Column(name = "price_cents", nullable = false)
-    private long priceCents;
+    private Long priceCents;
 
     @Column(nullable = false, length = 3, columnDefinition = "char(3)")
     private String currency;
@@ -79,7 +79,7 @@ public class SubscriptionPlan {
         return durationDays;
     }
 
-    public long getPriceCents() {
+    public Long getPriceCents() {
         return priceCents;
     }
 

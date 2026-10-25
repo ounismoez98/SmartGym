@@ -259,6 +259,19 @@ exactly `http://localhost:8088`.
   /api/membership/members/{id}/payments/total` returns the sum of `RECORDED`
   amounts for ADMIN or that member. There are no payment `PUT` or `DELETE`
   endpoints.
+- Administrative assistant endpoints under `/api/membership/assistant` are
+  ADMIN-only: `POST /explain` answers from validated policies and plan
+  conditions; `GET /renewals?days=N` summarizes SQL-selected renewals;
+  `POST /reminders` creates a stored `DRAFT`; `PUT /reminders/{id}` edits a
+  draft; and `POST /reminders/{id}/confirm` or `/reject` changes its final
+  state. Confirmation sends the message to the member email read from the
+  database. Local SMTP uses MailHog at `http://localhost:8025` (SMTP port
+  `1025`).
+- The assistant sends only a member's first name, plan name, expiration date,
+  plan amount, and validated policy text to Groq. It does not send email,
+  phone numbers, member IDs, or Keycloak IDs. Generated reminder dates and
+  amounts are checked against database facts; invalid or incomplete output
+  becomes an editable draft marked `[À COMPLÉTER]`.
 - Membership, employee, subscription, and payment changes publish the event
   types documented in [docs/events.md](docs/events.md) to RabbitMQ after
   commit. Delivery is best effort; failed broker publication is logged and is
@@ -314,19 +327,16 @@ or browser flows. Browser and Compose checks are not re-verified.
 
 ## Project status
 
-The delivered scope is the Keycloak-backed authentication and authorization
-vertical slice: Angular sign-in and route guards, the Spring membership
-identity API, role checks, member ownership checks, and development profile
-provisioning, member and employee CRUD, and coach assignments. The SPA module
-pages are placeholders; subscription plan, subscription, and payment
-management are also delivered. Business CRUD for the other modules is not
-delivered.
+The delivered scope includes the Keycloak-backed authentication and
+authorization vertical slice, member and employee CRUD, coach assignments,
+subscription plans and subscriptions, payments with traceable corrections,
+post-commit RabbitMQ events, and the administrative assistant and reminder
+confirmation flow. The Angular module pages remain placeholders. Business
+features for the other modules are not delivered.
 
 The following are not yet delivered:
 
 - Application RabbitMQ consumers.
-- The administrative LLM assistant. Groq configuration is prepared, but the
-  API does not call an LLM yet.
 - SMTP password recovery and production HTTPS.
 
 Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
