@@ -8,17 +8,25 @@ import {
   BodyMeasurement,
   CreateNutritionMealPlan,
   DailyNutrition,
+  HydrationDay,
+  HydrationLog,
   NutritionApiService,
   NutritionBmiResult,
   NutritionCalculation,
   NutritionEnergyEstimate,
+  NutritionGoalTimeline,
   NutritionFood,
   NutritionJournalEntry,
   NutritionMacroTargets,
   NutritionMealPlan,
   NutritionMealType,
-  NutritionProfile
+  NutritionPlanType,
+  NutritionPlanView,
+  NutritionProfile,
+  SaveNutritionPlan
 } from './nutrition-api.service';
+
+type NutritionView = 'overview' | 'plan' | 'progress' | 'library' | 'journal' | 'onboarding';
 
 @Component({
   standalone: true,
@@ -38,6 +46,7 @@ import {
       @if (loading) {
         <p class="notice" role="status">Loading your private nutrition data…</p>
       }
+
       @if (pageError) {
         <p class="notice error" role="alert">{{ pageError }}</p>
       }
@@ -74,7 +83,8 @@ import {
             </div>
             @if (remainingCalories !== null) {
               <p class="target-line">
-                Saved target: {{ profile!.targetCalories }} kcal ·
+                {{ profile!.calorieTargetMode === 'AUTO' ? 'Estimated target' : 'Saved target' }}:
+                {{ profile!.targetCalories }} kcal ·
                 @if (remainingCalories >= 0) { {{ remainingCalories | number:'1.0-0' }} kcal remaining }
                 @else { {{ -remainingCalories | number:'1.0-0' }} kcal over target }
               </p>
@@ -103,7 +113,9 @@ import {
             <dl>
               <div><dt>Weight</dt><dd>{{ profile.weightKg ?? 'Not set' }}{{ profile.weightKg ? ' kg' : '' }}</dd></div>
               <div><dt>Activity</dt><dd>{{ profile.activityLevel }}</dd></div>
-              <div><dt>Calorie target</dt><dd>{{ profile.targetCalories ?? 'Not set' }}{{ profile.targetCalories ? ' kcal' : '' }}</dd></div>
+              <div><dt>Calorie target</dt><dd>{{ profile.targetCalories ?? 'Not set' }}{{ profile.targetCalories ? ' kcal' : '' }}
+                @if (profile.targetCalories && profile.calorieTargetMode === 'AUTO') { <small>Estimated</small> }
+              </dd></div>
             </dl>
             <a class="text-link" href="#profile">Edit profile →</a>
           } @else {
@@ -191,7 +203,7 @@ import {
           <div><p class="eyebrow">YOUR STARTING POINT</p><h2>Guided body profile</h2></div>
           <span class="section-index">01</span>
         </div>
-        <p class="muted">Profile details are saved to your authenticated account. Optional presentation choices below are only for this screen and are not used to infer health or body composition.</p>
+        <p class="muted">Profile details are saved to your authenticated account. Calorie estimates are approximate and are not medical advice.</p>
         <fieldset class="presentation-choice">
           <legend>Illustration preference <span class="muted">(UI only)</span></legend>
           <button type="button" class="presentation-card" [class.selected]="bodyPresentation === 'female'"
@@ -210,7 +222,25 @@ import {
           <label>Age <span class="unit">years</span><input type="number" min="1" [(ngModel)]="profileForm.age" name="age" /></label>
           <label>Height <span class="unit">cm</span><input type="number" min="1" step="0.1" [(ngModel)]="profileForm.heightCm" name="heightCm" /></label>
           <label>Current weight <span class="unit">kg</span><input type="number" min="1" step="0.1" [(ngModel)]="profileForm.weightKg" name="weightKg" /></label>
-          <label>Calorie target <span class="unit">kcal/day · optional</span><input type="number" min="1" [(ngModel)]="profileForm.targetCalories" name="targetCalories" /></label>
+          <label>Daily calorie target
+            <select [(ngModel)]="profileForm.calorieTargetMode" name="calorieTargetMode" required>
+              <option value="AUTO">Estimate automatically</option>
+              <option value="MANUAL">Set manually</option>
+            </select>
+          </label>
+          @if (profileForm.calorieTargetMode === 'MANUAL') {
+            <label>Calorie target <span class="unit">kcal/day</span>
+              <input type="number" min="1" [(ngModel)]="profileForm.targetCalories" name="targetCalories" required />
+            </label>
+          } @else {
+            <label>Mifflin–St Jeor equation input <span class="unit">optional</span>
+              <select [(ngModel)]="profileForm.energyEquationSex" name="energyEquationSex">
+                <option [ngValue]="null">Choose to enable estimate</option>
+                <option value="FEMALE">Female equation</option>
+                <option value="MALE">Male equation</option>
+              </select>
+            </label>
+          }
           <label>Fitness goal
             <select [(ngModel)]="profileForm.goal" name="goal" required>
               <option value="">Choose a goal</option><option value="weight loss">Weight loss</option>
@@ -231,11 +261,13 @@ import {
               <option value="pescatarian">Pescatarian</option><option value="other">Other</option>
             </select>
           </label>
-          <label>Target weight <span class="unit">kg · session only</span><input type="number" min="1" step="0.1" [(ngModel)]="sessionPreferences.targetWeightKg" name="targetWeight" /></label>
-          <label>Training frequency <span class="unit">sessions/week · session only</span><input type="number" min="0" max="14" [(ngModel)]="sessionPreferences.trainingFrequency" name="trainingFrequency" /></label>
+          <label>Target weight <span class="unit">kg</span><input type="number" min="1" step="0.1" [(ngModel)]="profileForm.targetWeightKg" name="targetWeight" /></label>
+          <label>Desired target date <input type="date" [(ngModel)]="profileForm.targetDate" name="targetDate" /></label>
           <div class="form-actions"><button class="button primary" type="submit" [disabled]="savingProfile">Save supported profile details</button></div>
         </form>
-        <p class="notice">Target weight and training frequency are not stored or used by the current API. BMR/TDEE remain unavailable because the profile does not contain the required equation input.</p>
+        @if (profileForm.calorieTargetMode === 'AUTO') {
+          <p class="notice">Save age, height, current weight, activity, goal, and an optional equation input to calculate an estimated daily target. Automatic targets recalculate when you save the profile.</p>
+        }
         @if (profileError) { <p class="notice error" role="alert">{{ profileError }}</p> }
       </section>
 
@@ -422,6 +454,11 @@ import {
           </article>
           <article class="estimate-card">
             <h3>BMR &amp; TDEE</h3>
+            @if (energyEstimate?.available) {
+              <p>BMR: {{ energyEstimate!.bmrCaloriesPerDay | number:'1.0-0' }} kcal/day</p>
+              <p>TDEE: {{ energyEstimate!.tdeeCaloriesPerDay | number:'1.0-0' }} kcal/day</p>
+              <p>Suggested daily target: <strong>{{ energyEstimate!.goalAdjustedCalories | number:'1.0-0' }} kcal</strong></p>
+            }
             <p>{{ energyEstimate?.note || 'Energy estimates are not available.' }}</p>
           </article>
           <article class="estimate-card">
@@ -443,15 +480,18 @@ import {
           <div><p class="eyebrow">OPTIONAL LOCAL MODEL</p><h2>AI meal-plan assistant</h2></div>
           <span class="section-index">06</span>
         </div>
-        <p>Uses your saved profile, food library, and the restrictions you enter here. Allergies must be explicitly listed. Suggestions are not medical advice or proof of allergy safety.</p>
-        <p class="notice">Budget, cuisine, meals per day, disliked foods, and cooking preferences are not stored or supported by the current API. They are not collected or sent. Meal plans can be generated only when a compatible local LLM endpoint is configured.</p>
+        <p>Generate complete meal ideas from your saved profile. Add allergies or ingredients to avoid; your food library is optional, so recipes can use ingredients you have not saved yet. Suggestions are estimates, not medical advice or proof of allergy safety.</p>
+        <p class="notice">Suggestions include complete recipes with ingredient quantities and preparation steps. They favor lean protein, vegetables, legumes, whole grains, and lighter cooking methods. Nutrition remains an estimate, not a guarantee of health or allergy safety; your coach can review saved meals and adjust their details.</p>
         <form class="form-grid" (ngSubmit)="generateAiPlan()">
+          <label>Plan type<select [(ngModel)]="selectedPlanType" name="planType">
+            <option value="DAILY">Daily plan</option><option value="WEEKLY">Seven-day plan</option>
+          </select></label>
           <label class="full-width">Allergies and ingredient restrictions
             <input [(ngModel)]="aiRestrictions" name="aiRestrictions" placeholder="Example: peanuts, shellfish" />
           </label>
           <div class="form-actions">
             <button class="button primary" type="submit" [disabled]="isGeneratingAiPlan || isSavingGeneratedPlan || !profile">
-              {{ isGeneratingAiPlan ? 'Generating…' : aiPlan ? 'Regenerate suggestion' : 'Generate suggestion' }}
+              {{ isGeneratingAiPlan ? 'Generating…' : aiPlan ? 'Regenerate Meal Plan' : 'Generate Meal Plan' }}
             </button>
             @if (!profile) { <small class="muted">Save a profile with a goal and calorie target first.</small> }
           </div>
@@ -467,35 +507,32 @@ import {
               <div class="stat-card"><span>Carbs</span><strong>{{ plan.dailyNutrition.carbohydrateGrams | number:'1.0-1' }} g</strong></div>
               <div class="stat-card"><span>Fat</span><strong>{{ plan.dailyNutrition.fatGrams | number:'1.0-1' }} g</strong></div>
             </div>
-            @for (meal of plan.meals; track $index) {
+            @for (meal of plan.meals; track $index; let mealIndex = $index) {
               <article class="record-card ai-meal">
                 <div class="record-heading"><label>Meal name<input [(ngModel)]="meal.name" [name]="'aiName' + $index" /></label>
                   <label>Meal type<select [(ngModel)]="meal.mealType" [name]="'aiType' + $index">
                     @for (type of mealTypes; track type) { <option [ngValue]="type">{{ type.replace('_', ' ') }}</option> }
                   </select></label></div>
-                <p class="muted">Nutrition source: {{ meal.nutritionSource.replace('_', ' ').toLowerCase() }}.
-                  Editing foods marks model estimates for review.</p>
-                @for (item of meal.foods; track $index) {
+                <p class="muted">Nutrition source: {{ meal.nutritionSource.replace('_', ' ').toLowerCase() }}. Edit recipe ingredients and quantities before saving if needed.</p>
+                @for (item of meal.foods; track $index; let ingredientIndex = $index) {
                   <div class="food-picker">
-                    <label>Replace with saved food<select [(ngModel)]="item.foodId" (ngModelChange)="refreshAiNutrition()" [name]="'aiFood' + $index">
-                      <option [ngValue]="null">Select saved food</option>@for (food of foods; track food.id) {
-                        <option [ngValue]="food.id">{{ food.name }} · {{ food.calories }} kcal/serving</option>
-                      }
-                    </select></label>
-                    <label>Servings<input type="number" min="0.01" step="0.1" [(ngModel)]="item.servings" (ngModelChange)="refreshAiNutrition()" [name]="'aiServings' + $index" /></label>
+                    <label>Ingredient<input [(ngModel)]="item.name" [name]="'aiIngredient' + $index" maxlength="150" required /></label>
+                    <label>Amount / servings<input type="number" min="0.01" step="0.1" [(ngModel)]="item.servings" [name]="'aiServings' + $index" required /></label>
+                    <button class="button quiet small" type="button" (click)="removeAiIngredient(mealIndex, ingredientIndex)"
+                      [disabled]="meal.foods.length === 1">Remove</button>
                   </div>
                 }
+                <button class="button quiet small" type="button" (click)="addAiIngredient(mealIndex)">Add ingredient</button>
                 <label>Preparation instructions<textarea [(ngModel)]="meal.preparationInstructions" [name]="'aiPreparation' + $index" maxlength="350"></textarea></label>
-                <p>Meal estimate: {{ meal.estimatedNutrition.calories | number:'1.0-0' }} kcal · protein {{ meal.estimatedNutrition.proteinGrams | number:'1.0-1' }} g · carbs {{ meal.estimatedNutrition.carbohydrateGrams | number:'1.0-1' }} g · fat {{ meal.estimatedNutrition.fatGrams | number:'1.0-1' }} g</p>
+                <p>Meal estimate per {{ meal.servingSizeGrams }} g: {{ meal.estimatedNutrition.calories | number:'1.0-0' }} kcal · protein {{ meal.estimatedNutrition.proteinGrams | number:'1.0-1' }} g · carbs {{ meal.estimatedNutrition.carbohydrateGrams | number:'1.0-1' }} g · fat {{ meal.estimatedNutrition.fatGrams | number:'1.0-1' }} g</p>
               </article>
             }
             @if (plan.shoppingList.length) { <h3>Shopping list</h3><ul class="compact-list">@for (item of plan.shoppingList; track $index) { <li>{{ item }}</li> }</ul> }
             @if (plan.alternatives.length) { <h3>Alternatives and substitutions</h3><ul class="compact-list">@for (item of plan.alternatives; track $index) { <li>{{ item }}</li> }</ul> }
-            @if (hasAiNutritionReview) { <p class="notice">Choose a saved food for every meal item to recalculate estimated nutrition from your library before saving.</p> }
             <div class="form-actions"><button class="button primary" type="button" (click)="saveGeneratedAiPlan()" [disabled]="!canSaveGeneratedPlan()">
                 {{ isSavingGeneratedPlan ? 'Saving…' : 'Save reviewed meals' }}</button>
               <button class="button quiet" type="button" (click)="generateAiPlan()" [disabled]="isGeneratingAiPlan || isSavingGeneratedPlan">Regenerate</button></div>
-            <p class="muted">The current data model saves each meal separately and stores instructions in its description. The shopping list and alternatives are shown for review but are not persisted.</p>
+            <p class="muted">The approved plan and its dated meals are saved separately from the Food Journal. Your assigned coach can review and edit meals without changing the original restrictions. Shopping lists and alternatives are suggestions only.</p>
           }
         } @else if (!loading) {
           <p class="empty-state">No generated suggestion yet. If no local model endpoint is configured, the API will explain how to enable it and will not return a fabricated plan.</p>
@@ -623,6 +660,22 @@ export class NutritionComponent implements OnInit {
   readonly mealTypes: NutritionMealType[] = ['BREAKFAST', 'LUNCH', 'DINNER', 'SNACK', 'PRE_WORKOUT', 'POST_WORKOUT'];
   readonly activityLevels = ['sedentary', 'light', 'moderate', 'active', 'very active'];
   readonly fitnessGoals = ['weight loss', 'maintenance', 'muscle gain'];
+  readonly navigation: { id: NutritionView; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'plan', label: 'My Plan' },
+    { id: 'progress', label: 'My Progress' },
+    { id: 'library', label: 'Food Library' },
+    { id: 'journal', label: 'Food Journal' },
+    { id: 'onboarding', label: 'Profile setup' }
+  ];
+  readonly wizardSteps = [
+    { number: 1, label: 'Welcome' },
+    { number: 2, label: 'Starting point' },
+    { number: 3, label: 'Estimates' },
+    { number: 4, label: 'Your goal' },
+    { number: 5, label: 'Preferences' },
+    { number: 6, label: 'Meal ideas' }
+  ];
 
   loading = true;
   savingProfile = false;
@@ -630,6 +683,8 @@ export class NutritionComponent implements OnInit {
   dailyNutritionLoading = false;
   isGeneratingAiPlan = false;
   isSavingGeneratedPlan = false;
+  isLoadingHydration = false;
+  isSavingHydration = false;
   pageError = '';
   successMessage = '';
   profileError = '';
@@ -638,6 +693,7 @@ export class NutritionComponent implements OnInit {
   journalError = '';
   measurementError = '';
   aiError = '';
+  hydrationError = '';
   calculationErrors: { bmi: string; macros: string } = { bmi: '', macros: '' };
 
   foods: NutritionFood[] = [];
@@ -649,11 +705,20 @@ export class NutritionComponent implements OnInit {
   bmiEstimate: NutritionBmiResult | null = null;
   macroTargets: NutritionMacroTargets | null = null;
   energyEstimate: NutritionEnergyEstimate | null = null;
+  goalTimeline: NutritionGoalTimeline | null = null;
+  goalTimelineError = '';
+  hydration: HydrationDay | null = null;
   calculation: NutritionCalculation | null = null;
   aiPlan: AiMealPlanResponse | null = null;
-  private generatedPlanRestrictions: string[] = [];
+  savedNutritionPlans: NutritionPlanView[] = [];
 
+  activeView: NutritionView = 'overview';
+  wizardStep = 1;
+  wizardError = '';
   dailyNutritionDate = new Date().toISOString().slice(0, 10);
+  hydrationDate = new Date().toISOString().slice(0, 10);
+  hydrationWaterMl = 250;
+  editingHydrationLogId: number | null = null;
   foodSearch = '';
   bodyPresentation: 'female' | 'male' | null = null;
   calculationFoodId = 0;
@@ -663,17 +728,30 @@ export class NutritionComponent implements OnInit {
   editingJournalId: number | null = null;
   editingMeasurementId: number | null = null;
   aiRestrictions = '';
-  sessionPreferences = { targetWeightKg: null as number | null, trainingFrequency: null as number | null };
-
+  selectedPlanType: NutritionPlanType = 'DAILY';
+  selectedDraftDayIndex = 0;
+  updatingPlanId: number | null = null;
+  planActionError = '';
   profileForm = {
     profileName: 'My nutrition profile',
-    goal: '',
-    dietaryPreference: '',
+    goal: 'maintenance',
+    dietaryPreference: 'balanced',
     activityLevel: '',
     age: null as number | null,
     heightCm: null as number | null,
     weightKg: null as number | null,
-    targetCalories: null as number | null
+    targetCalories: null as number | null,
+    calorieTargetMode: 'AUTO' as 'AUTO' | 'MANUAL',
+    energyEquationSex: null as 'FEMALE' | 'MALE' | null,
+    targetWeightKg: null as number | null,
+    targetDate: '',
+    allergiesText: '',
+    intolerancesText: '',
+    dislikedFoodsText: '',
+    preferredIngredientsText: '',
+    budgetPreference: null as 'LOW' | 'MODERATE' | 'FLEXIBLE' | null,
+    maxPreparationMinutes: null as number | null,
+    cookingPreference: ''
   };
 
   foodForm = this.emptyFoodForm();
@@ -689,6 +767,108 @@ export class NutritionComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadData();
+    this.loadHydration();
+  }
+
+  get wizardTitle(): string {
+    return this.wizardSteps[this.wizardStep - 1]?.label ?? 'Your nutrition profile';
+  }
+
+  get calorieProgressPercent(): number {
+    const target = this.profile?.targetCalories;
+    if (target == null || target <= 0 || !this.dailyNutrition) return 0;
+    return Math.min(100, Math.max(0, this.dailyNutrition.totals.calories / target * 100));
+  }
+
+  get hydrationProgressPercent(): number {
+    if (!this.hydration || this.hydration.targetMl <= 0) return 0;
+    return Math.min(100, Math.round(this.hydration.consumedMl / this.hydration.targetMl * 100));
+  }
+
+  setView(view: NutritionView): void {
+    this.activeView = view;
+  }
+
+  startOnboarding(): void {
+    this.wizardStep = 1;
+    this.wizardError = '';
+    this.activeView = 'onboarding';
+  }
+
+  previousOnboardingStep(): void {
+    if (this.wizardStep > 1 && !this.savingProfile) {
+      this.wizardError = '';
+      this.wizardStep--;
+    }
+  }
+
+  nextOnboardingStep(): void {
+    this.wizardError = '';
+    if (this.wizardStep === 1) {
+      if (!this.bodyPresentation) {
+        this.wizardError = 'Choose an illustration preference to continue. It is visual only.';
+        return;
+      }
+      this.wizardStep = 2;
+      return;
+    }
+    if (this.wizardStep === 2) {
+      if (!this.profileForm.age || !Number.isInteger(this.profileForm.age)
+          || this.profileForm.age < 1 || this.profileForm.age > 120
+          || !this.isPositive(this.profileForm.heightCm) || !this.isPositive(this.profileForm.weightKg)
+          || !this.profileForm.activityLevel) {
+        this.wizardError = 'Enter a valid age, height, weight, and activity level to continue.';
+        return;
+      }
+      this.saveWizardProfile(() => {
+        this.wizardStep = 3;
+      });
+      return;
+    }
+    if (this.wizardStep === 3) {
+      this.wizardStep = 4;
+      return;
+    }
+    if (this.wizardStep === 4) {
+      if (!this.profileForm.goal
+          || (this.profileForm.calorieTargetMode === 'MANUAL'
+            && (!this.profileForm.targetCalories || this.profileForm.targetCalories <= 0))
+          || (this.profileForm.calorieTargetMode === 'AUTO' && !this.profileForm.energyEquationSex)) {
+        this.wizardError = 'Choose a goal and provide a calorie target, either manually or with a separate energy-equation input.';
+        return;
+      }
+      this.saveWizardProfile(() => this.wizardStep = 5);
+      return;
+    }
+    if (this.wizardStep === 5) {
+      if (!this.profileForm.dietaryPreference) {
+        this.wizardError = 'Choose a dietary preference to continue.';
+        return;
+      }
+      this.saveWizardProfile(() => this.wizardStep = 6);
+    }
+  }
+
+  planNutrition(plan: NutritionMealPlan): NutritionCalculation {
+    const totals: NutritionCalculation = {
+      calories: 0, proteinGrams: 0, carbohydrateGrams: 0, fatGrams: 0, fiberGrams: 0, sodiumMg: 0
+    };
+    for (const item of plan.foods) {
+      const food = this.foods.find((savedFood) => savedFood.id === item.foodId);
+      if (!food) continue;
+      totals.calories += food.calories * item.servings;
+      totals.proteinGrams += food.proteinGrams * item.servings;
+      totals.carbohydrateGrams += food.carbohydrateGrams * item.servings;
+      totals.fatGrams += food.fatGrams * item.servings;
+      totals.fiberGrams += food.fiberGrams * item.servings;
+      totals.sodiumMg += food.sodiumMg * item.servings;
+    }
+    return totals;
+  }
+
+  planNutritionAvailable(plan: NutritionMealPlan): boolean {
+    return plan.foods.length > 0
+      && plan.foods.every((item) => this.foods.some((food) => food.id === item.foodId));
   }
 
   get filteredFoods(): NutritionFood[] {
@@ -740,27 +920,26 @@ export class NutritionComponent implements OnInit {
     return this.orderedMeasurements.at(-1)?.measurementDate ?? '';
   }
 
-  get hasAiNutritionReview(): boolean {
-    return !!this.aiPlan?.plan?.meals.some((meal) => meal.nutritionSource === 'REVIEW_REQUIRED');
-  }
-
   private loadData(): void {
     this.loading = true;
     this.pageError = '';
     forkJoin({
       foods: this.nutritionApi.getFoods(),
       mealPlans: this.nutritionApi.getMealPlans(),
+      nutritionPlans: this.nutritionApi.getNutritionPlans(),
       journal: this.nutritionApi.getJournal(),
       measurements: this.nutritionApi.getMeasurements(),
       profile: this.nutritionApi.getProfile().pipe(catchError(() => of(null)))
     }).subscribe({
-      next: ({ foods, mealPlans, journal, measurements, profile }) => {
+      next: ({ foods, mealPlans, nutritionPlans, journal, measurements, profile }) => {
         this.foods = foods;
         this.mealPlans = mealPlans;
+        this.savedNutritionPlans = nutritionPlans;
         this.journal = journal;
         this.measurements = measurements;
         this.profile = profile;
         if (profile) this.setProfileForm(profile);
+        else this.activeView = 'onboarding';
         this.loading = false;
         this.loadDashboardCalculations();
         this.loadDailyNutrition();
@@ -781,7 +960,18 @@ export class NutritionComponent implements OnInit {
       age: profile.age,
       heightCm: profile.heightCm,
       weightKg: profile.weightKg,
-      targetCalories: profile.targetCalories
+      targetCalories: profile.targetCalories,
+      calorieTargetMode: profile.calorieTargetMode,
+      energyEquationSex: profile.energyEquationSex,
+      targetWeightKg: profile.targetWeightKg,
+      targetDate: profile.targetDate ?? '',
+      allergiesText: (profile.allergies ?? []).join(', '),
+      intolerancesText: (profile.intolerances ?? []).join(', '),
+      dislikedFoodsText: (profile.dislikedFoods ?? []).join(', '),
+      preferredIngredientsText: (profile.preferredIngredients ?? []).join(', '),
+      budgetPreference: profile.budgetPreference,
+      maxPreparationMinutes: profile.maxPreparationMinutes,
+      cookingPreference: profile.cookingPreference ?? ''
     };
   }
 
@@ -805,15 +995,23 @@ export class NutritionComponent implements OnInit {
       next: (result) => this.energyEstimate = result,
       error: () => this.energyEstimate = null
     });
+    this.nutritionApi.calculateGoalTimeline().subscribe({
+      next: (result) => { this.goalTimeline = result; this.goalTimelineError = ''; },
+      error: (error: { error?: { message?: string } }) => {
+        this.goalTimeline = null;
+        this.goalTimelineError = error.error?.message ?? 'Goal timeline is not available right now.';
+      }
+    });
   }
 
   saveProfile(): void {
     this.profileError = '';
     this.successMessage = '';
     this.savingProfile = true;
-    this.nutritionApi.saveProfile(this.profileForm).subscribe({
+    this.nutritionApi.saveProfile(this.profilePayload()).subscribe({
       next: (profile) => {
         this.profile = profile;
+        this.setProfileForm(profile);
         this.savingProfile = false;
         this.successMessage = 'Your supported profile details were saved.';
         this.loadDashboardCalculations();
@@ -826,23 +1024,78 @@ export class NutritionComponent implements OnInit {
     });
   }
 
+  private saveWizardProfile(onSaved: () => void): void {
+    this.savingProfile = true;
+    this.profileError = '';
+    this.nutritionApi.saveProfile(this.profilePayload()).subscribe({
+      next: (profile) => {
+        this.profile = profile;
+        this.setProfileForm(profile);
+        this.savingProfile = false;
+        this.loadDashboardCalculations();
+        onSaved();
+      },
+      error: (error: { error?: { message?: string }; message?: string }) => {
+        this.savingProfile = false;
+        this.profileError = error.error?.message ?? error.message ?? 'Could not save your nutrition profile.';
+        this.wizardError = this.profileError;
+      }
+    });
+  }
+
+  private isPositive(value: number | null): boolean {
+    return value != null && Number.isFinite(value) && value > 0;
+  }
+
+  private profilePayload(): Partial<NutritionProfile> {
+    return {
+      profileName: this.profileForm.profileName,
+      goal: this.profileForm.goal,
+      dietaryPreference: this.profileForm.dietaryPreference,
+      activityLevel: this.profileForm.activityLevel,
+      age: this.profileForm.age,
+      heightCm: this.profileForm.heightCm,
+      weightKg: this.profileForm.weightKg,
+      targetCalories: this.profileForm.targetCalories,
+      calorieTargetMode: this.profileForm.calorieTargetMode,
+      energyEquationSex: this.profileForm.energyEquationSex,
+      targetWeightKg: this.profileForm.targetWeightKg,
+      targetDate: this.profileForm.targetDate || null,
+      allergies: this.preferenceList(this.profileForm.allergiesText),
+      intolerances: this.preferenceList(this.profileForm.intolerancesText),
+      dislikedFoods: this.preferenceList(this.profileForm.dislikedFoodsText),
+      preferredIngredients: this.preferenceList(this.profileForm.preferredIngredientsText),
+      budgetPreference: this.profileForm.budgetPreference,
+      maxPreparationMinutes: this.profileForm.maxPreparationMinutes,
+      cookingPreference: this.profileForm.cookingPreference || null
+    };
+  }
+
+  private preferenceList(value: string): string[] {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
   private emptyFoodForm(): Omit<NutritionFood, 'id'> {
     return { name: '', brand: '', servingSizeGrams: 100, calories: 0, proteinGrams: 0,
       carbohydrateGrams: 0, fatGrams: 0, fiberGrams: 0, sodiumMg: 0 };
   }
 
   saveFood(): void {
+    if (this.savingFood) return;
     this.foodError = '';
+    this.savingFood = true;
     const request = this.editingFoodId
       ? this.nutritionApi.updateFood(this.editingFoodId, this.foodForm)
       : this.nutritionApi.createFood(this.foodForm);
     request.subscribe({
       next: () => {
+        this.savingFood = false;
         this.successMessage = this.editingFoodId ? 'Food updated.' : 'Food added to your library.';
         this.cancelFoodEdit();
         this.loadData();
       },
       error: (error: { error?: { message?: string }; message?: string }) => {
+        this.savingFood = false;
         this.foodError = error.error?.message ?? error.message ?? 'Could not save this food.';
       }
     });
@@ -989,6 +1242,79 @@ export class NutritionComponent implements OnInit {
     });
   }
 
+  loadHydration(date = this.hydrationDate): void {
+    this.hydrationDate = date;
+    this.isLoadingHydration = true;
+    this.hydrationError = '';
+    this.nutritionApi.getHydrationDay(date).subscribe({
+      next: (result) => {
+        this.hydration = result;
+        this.isLoadingHydration = false;
+      },
+      error: (error: { error?: { message?: string } }) => {
+        this.hydration = null;
+        this.isLoadingHydration = false;
+        this.hydrationError = error.error?.message ?? 'Could not load hydration history.';
+      }
+    });
+  }
+
+  saveHydrationLog(): void {
+    this.hydrationError = '';
+    if (!Number.isInteger(this.hydrationWaterMl)
+        || this.hydrationWaterMl < 1 || this.hydrationWaterMl > 2000) {
+      this.hydrationError = 'Enter a whole-number amount between 1 and 2,000 mL.';
+      return;
+    }
+    this.isSavingHydration = true;
+    const existing = this.hydration?.logs.find((log) => log.id === this.editingHydrationLogId);
+    const payload = { consumedAt: existing?.consumedAt ?? null, waterMl: this.hydrationWaterMl };
+    const request = this.editingHydrationLogId == null
+      ? this.nutritionApi.addHydrationLog({ waterMl: this.hydrationWaterMl })
+      : this.nutritionApi.correctHydrationLog(this.editingHydrationLogId, payload);
+    request.subscribe({
+      next: (result) => {
+        this.hydration = result;
+        this.hydrationDate = result.date;
+        this.editingHydrationLogId = null;
+        this.hydrationWaterMl = 250;
+        this.isSavingHydration = false;
+        this.successMessage = 'Drinking-water log saved.';
+      },
+      error: (error: { error?: { message?: string }; message?: string }) => {
+        this.isSavingHydration = false;
+        this.hydrationError = error.error?.message ?? error.message ?? 'Could not save this hydration log.';
+      }
+    });
+  }
+
+  editHydrationLog(log: HydrationLog): void {
+    this.editingHydrationLogId = log.id;
+    this.hydrationWaterMl = log.waterMl;
+    this.hydrationError = '';
+  }
+
+  cancelHydrationEdit(): void {
+    this.editingHydrationLogId = null;
+    this.hydrationWaterMl = 250;
+    this.hydrationError = '';
+  }
+
+  deleteHydrationLog(log: HydrationLog): void {
+    if (!window.confirm(`Remove the ${log.waterMl} mL drinking-water log?`)) return;
+    this.hydrationError = '';
+    this.nutritionApi.deleteHydrationLog(log.id).subscribe({
+      next: () => {
+        if (this.editingHydrationLogId === log.id) this.cancelHydrationEdit();
+        this.successMessage = 'Drinking-water log removed.';
+        this.loadHydration();
+      },
+      error: (error: { error?: { message?: string } }) => {
+        this.hydrationError = error.error?.message ?? 'Could not remove this hydration log.';
+      }
+    });
+  }
+
   private emptyMeasurementForm(): Omit<BodyMeasurement, 'id'> {
     return { measurementDate: new Date().toISOString().slice(0, 10), weightKg: 0,
       waistCm: 0, hipCm: 0, chestCm: 0, armCm: 0, thighCm: 0, notes: '' };
@@ -1047,15 +1373,30 @@ export class NutritionComponent implements OnInit {
     });
   }
 
+  onAiRestrictionsChanged(): void {
+    if (this.aiPlan?.available) {
+      this.aiPlan = null;
+      this.aiError = 'Restrictions changed. Generate new suggestions to review the updated exclusions.';
+    }
+  }
+
   generateAiPlan(): void {
     if (!this.profile || this.isGeneratingAiPlan || this.isSavingGeneratedPlan) return;
+    if (!this.profile.targetCalories) {
+      this.aiError = 'Set a calorie target or enable a supported energy estimate before generating suggestions.';
+      return;
+    }
     const restrictions = this.aiRestrictions.split(',').map((item) => item.trim()).filter(Boolean);
     this.aiError = '';
     this.isGeneratingAiPlan = true;
-    this.nutritionApi.generatePlan({ restrictions }).subscribe({
+    this.nutritionApi.generatePersistentPlan({
+      planType: this.selectedPlanType,
+      startDate: this.dailyNutritionDate,
+      restrictions
+    }).subscribe({
       next: (result) => {
         this.aiPlan = result;
-        this.generatedPlanRestrictions = restrictions;
+        this.selectedDraftDayIndex = 0;
         this.isGeneratingAiPlan = false;
       },
       error: (error: { status?: number }) => {
@@ -1065,67 +1406,67 @@ export class NutritionComponent implements OnInit {
     });
   }
 
-  refreshAiNutrition(): void {
-    const plan = this.aiPlan?.plan;
-    if (!plan) return;
-    for (const meal of plan.meals) {
-      const selected = meal.foods.map((item) => this.foods.find((food) => food.id === item.foodId));
-      if (selected.some((food) => !food)) {
-        meal.nutritionSource = 'REVIEW_REQUIRED';
-        continue;
-      }
-      meal.estimatedNutrition = meal.foods.reduce((total, item, index) => {
-        const food = selected[index]!;
-        return {
-          calories: total.calories + food.calories * item.servings,
-          proteinGrams: total.proteinGrams + food.proteinGrams * item.servings,
-          carbohydrateGrams: total.carbohydrateGrams + food.carbohydrateGrams * item.servings,
-          fatGrams: total.fatGrams + food.fatGrams * item.servings
-        };
-      }, { calories: 0, proteinGrams: 0, carbohydrateGrams: 0, fatGrams: 0 });
-      meal.nutritionSource = 'SAVED_FOOD_DATA';
-    }
-    plan.dailyNutrition = plan.meals.reduce((total, meal) => ({
-      calories: total.calories + meal.estimatedNutrition.calories,
-      proteinGrams: total.proteinGrams + meal.estimatedNutrition.proteinGrams,
-      carbohydrateGrams: total.carbohydrateGrams + meal.estimatedNutrition.carbohydrateGrams,
-      fatGrams: total.fatGrams + meal.estimatedNutrition.fatGrams
-    }), { calories: 0, proteinGrams: 0, carbohydrateGrams: 0, fatGrams: 0 });
+  addAiIngredient(mealIndex: number): void {
+    const meal = this.aiPlan?.days?.[this.selectedDraftDayIndex]?.meals[mealIndex];
+    if (meal) meal.foods.push({ name: '', servings: 1, foodId: null });
+  }
+
+  removeAiIngredient(mealIndex: number, ingredientIndex: number): void {
+    const foods = this.aiPlan?.days?.[this.selectedDraftDayIndex]?.meals[mealIndex]?.foods;
+    if (foods && foods.length > 1) foods.splice(ingredientIndex, 1);
   }
 
   canSaveGeneratedPlan(): boolean {
     return !this.isGeneratingAiPlan && !this.isSavingGeneratedPlan
-      && !!this.aiPlan?.available && !!this.aiPlan.plan && !this.hasAiNutritionReview
-      && this.aiPlan.plan.meals.every((meal) => meal.name.trim().length > 0
-        && meal.preparationInstructions.trim().length > 0
-        && meal.foods.length > 0
-        && meal.foods.every((food) => !!food.foodId && Number.isFinite(food.servings) && food.servings > 0));
+      && !!this.aiPlan?.available && !!this.aiPlan.plan
+      && !!this.aiPlan.generationContextId
+      && !!this.aiPlan.days?.length
+      && this.aiPlan.days.every((day) => day.meals.length > 0
+        && day.meals.every((meal) => meal.name.trim().length > 0
+          && meal.preparationInstructions.trim().length > 0
+          && Number.isInteger(meal.servingSizeGrams) && meal.servingSizeGrams > 0
+          && meal.servingSizeGrams <= 2500
+          && meal.foods.length > 0
+          && meal.foods.every((food) => food.name.trim().length > 0
+            && Number.isFinite(food.servings) && food.servings > 0)
+          && Object.values(meal.estimatedNutrition).every((value) => Number.isFinite(value) && value >= 0)));
   }
 
   saveGeneratedAiPlan(): void {
     const plan = this.aiPlan?.plan;
-    if (!plan || this.isSavingGeneratedPlan || !this.canSaveGeneratedPlan()) {
-      this.aiError = 'Choose a saved food for every ingredient and confirm each serving quantity before saving.';
+    const generationContextId = this.aiPlan?.generationContextId;
+    if (!plan || !generationContextId || this.isSavingGeneratedPlan || !this.canSaveGeneratedPlan()) {
+      this.aiError = 'Check each recipe name, ingredient, serving size, preparation step, and nutrition estimate before saving.';
       return;
     }
     this.aiError = '';
     this.isSavingGeneratedPlan = true;
-    this.nutritionApi.saveGeneratedPlan({
+    const payload: SaveNutritionPlan = {
       planName: plan.planName,
       goal: plan.goal,
-      restrictions: this.generatedPlanRestrictions,
-      meals: plan.meals.map((meal) => ({
-        name: meal.name,
-        mealType: meal.mealType,
-        preparationInstructions: meal.preparationInstructions,
-        foods: meal.foods.map((food) => ({ foodId: food.foodId!, servings: food.servings }))
+      generationContextId,
+      planType: this.aiPlan!.planType ?? 'DAILY',
+      startDate: this.aiPlan!.startDate ?? this.dailyNutritionDate,
+      days: (this.aiPlan!.days ?? []).map((day) => ({
+        date: day.date,
+        meals: day.meals.map((meal) => ({
+          name: meal.name,
+          mealType: meal.mealType,
+          servingSizeGrams: meal.servingSizeGrams,
+          preparationInstructions: meal.preparationInstructions,
+          foods: meal.foods.map((food) => ({ ...food })),
+          estimatedNutrition: { ...meal.estimatedNutrition },
+          nutritionSource: meal.nutritionSource
+        }))
       }))
-    }).subscribe({
-      next: () => {
+    };
+    this.nutritionApi.savePersistentPlan(payload).subscribe({
+      next: (savedPlan) => {
         this.isSavingGeneratedPlan = false;
         this.aiPlan = null;
-        this.generatedPlanRestrictions = [];
-        this.successMessage = 'Reviewed meals saved to your member-owned meal plans.';
+        this.activeView = 'plan';
+        this.successMessage = 'Your reviewed plan has been saved. Your coach can review and edit it.';
+        this.savedNutritionPlans = [savedPlan, ...this.savedNutritionPlans];
         this.loadData();
       },
       error: (error: { status?: number }) => {
@@ -1133,6 +1474,49 @@ export class NutritionComponent implements OnInit {
         this.isSavingGeneratedPlan = false;
       }
     });
+  }
+
+  regenerateSavedDay(plan: NutritionPlanView, date: string): void {
+    if (plan.id == null || this.updatingPlanId != null) return;
+    this.updatingPlanId = plan.id;
+    this.planActionError = '';
+    this.nutritionApi.regeneratePlanDay(plan.id, date, plan.version).subscribe({
+      next: (updated) => {
+        this.replaceSavedPlan(updated);
+        this.updatingPlanId = null;
+        this.successMessage = `The meals for ${date} were regenerated. Other days were left unchanged.`;
+      },
+      error: (error: { status?: number }) => {
+        this.planActionError = error.status === 409
+          ? 'This plan changed in another request. Reload the plan before trying again.'
+          : 'Could not regenerate that day. Your saved meals were not changed.';
+        this.updatingPlanId = null;
+      }
+    });
+  }
+
+  replaceSavedMeal(plan: NutritionPlanView, mealId: number): void {
+    if (plan.id == null || this.updatingPlanId != null) return;
+    this.updatingPlanId = plan.id;
+    this.planActionError = '';
+    this.nutritionApi.replacePlanMeal(plan.id, mealId, plan.version).subscribe({
+      next: (updated) => {
+        this.replaceSavedPlan(updated);
+        this.updatingPlanId = null;
+        this.successMessage = 'The meal was replaced. Other plan meals were left unchanged.';
+      },
+      error: (error: { status?: number }) => {
+        this.planActionError = error.status === 409
+          ? 'This plan changed in another request. Reload the plan before trying again.'
+          : 'Could not replace this meal. Your saved plan was not changed.';
+        this.updatingPlanId = null;
+      }
+    });
+  }
+
+  private replaceSavedPlan(updated: NutritionPlanView): void {
+    this.savedNutritionPlans = this.savedNutritionPlans.map((plan) =>
+      plan.id === updated.id ? updated : plan);
   }
 
   private mealPlanRequestError(error: { status?: number }, fallback: string): string {

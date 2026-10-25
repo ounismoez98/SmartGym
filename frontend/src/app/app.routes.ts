@@ -4,7 +4,8 @@ import { DashboardComponent } from './dashboard.component';
 import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
 import { MessagePageComponent } from './message-page.component';
-import { NutritionComponent } from './nutrition.component';
+import { NutritionWorkspaceComponent } from './nutrition-workspace.component';
+import { CoachNutritionComponent } from './coach-nutrition.component';
 
 const moduleRoles = ['ADMIN', 'COACH', 'MEMBER'];
 const nutritionRoles = ['ADMIN', 'MEMBER'];
@@ -32,9 +33,15 @@ export const appRoutes: Routes = [
   },
   {
     path: 'nutrition',
-    component: NutritionComponent,
+    component: NutritionWorkspaceComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Nutrition', module: 'M4', description: 'Nutrition plans and member resources.', roles: nutritionRoles }
+  },
+  {
+    path: 'coach/nutrition',
+    component: CoachNutritionComponent,
+    canActivate: [authGuard, roleGuard],
+    data: { title: 'Coach Nutrition', module: 'M4', description: 'Review and edit meal suggestions for assigned members.', roles: ['COACH'] }
   },
   { path: 'forbidden', component: MessagePageComponent, data: { title: 'Access denied', message: 'Your account does not have permission to view this page.' } },
   { path: 'not-found', component: MessagePageComponent, data: { title: 'Page not found', message: 'The page you requested does not exist.' } },

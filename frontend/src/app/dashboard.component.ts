@@ -111,7 +111,8 @@ export class DashboardComponent {
     { code: 'M1', title: 'Membership', description: 'Your membership, reservations, and assigned members.', route: '/membership', roles: ['ADMIN', 'COACH', 'MEMBER'] },
     { code: 'M2', title: 'Courses', description: 'Courses and class schedules for your gym.', route: '/courses', roles: ['ADMIN', 'COACH', 'MEMBER'] },
     { code: 'M3', title: 'Training', description: 'Training plans and coaching workspace.', route: '/training', roles: ['ADMIN', 'COACH', 'MEMBER'] },
-    { code: 'M4', title: 'Nutrition', description: 'Nutrition plans and member resources.', route: '/nutrition', roles: ['ADMIN', 'MEMBER'] }
+    { code: 'M4', title: 'Nutrition', description: 'Nutrition plans and member resources.', route: '/nutrition', roles: ['ADMIN', 'MEMBER'] },
+    { code: 'M4', title: 'Coach Nutrition', description: 'Review and edit meal suggestions for assigned members.', route: '/coach/nutrition', roles: ['COACH'] }
   ].filter((module) => this.auth.hasAnyRole(module.roles));
 
   constructor() {

@@ -49,6 +49,7 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/membership/members/*/private").authenticated()
                         .requestMatchers("/api/membership/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/membership/coach/**").hasRole("COACH")
+                        .requestMatchers("/api/nutrition/coach/**").hasRole("COACH")
                         .requestMatchers("/api/courses/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/training/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/nutrition/**").hasAnyRole("ADMIN", "MEMBER")

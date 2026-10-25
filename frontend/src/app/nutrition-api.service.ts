@@ -65,6 +65,17 @@ export interface NutritionProfile {
   heightCm: number | null;
   weightKg: number | null;
   targetCalories: number | null;
+  calorieTargetMode: 'AUTO' | 'MANUAL';
+  energyEquationSex: 'FEMALE' | 'MALE' | null;
+  targetWeightKg: number | null;
+  targetDate: string | null;
+  allergies: string[];
+  intolerances: string[];
+  dislikedFoods: string[];
+  preferredIngredients: string[];
+  budgetPreference: 'LOW' | 'MODERATE' | 'FLEXIBLE' | null;
+  maxPreparationMinutes: number | null;
+  cookingPreference: string | null;
 }
 
 export interface NutritionCalculation {
@@ -102,7 +113,34 @@ export interface NutritionEnergyEstimate {
   tdeeCaloriesPerDay: number | null;
   goalCategory: string | null;
   activityFactor: number | null;
+  goalAdjustedCalories: number | null;
   note: string;
+}
+
+export interface NutritionGoalTimeline {
+  available: boolean;
+  minimumWeeks: number | null;
+  maximumWeeks: number | null;
+  earliestEstimatedDate: string | null;
+  latestEstimatedDate: string | null;
+  requestedDate: string | null;
+  requestedDateStatus: 'NOT_SET' | 'EARLIER_THAN_ESTIMATE' | 'WITHIN_ESTIMATE' | 'LATER_THAN_ESTIMATE' | 'UNAVAILABLE';
+  note: string;
+  assumptions: string;
+}
+
+export interface HydrationLog {
+  id: number;
+  consumedAt: string;
+  waterMl: number;
+}
+
+export interface HydrationDay {
+  date: string;
+  consumedMl: number;
+  targetMl: number;
+  logs: HydrationLog[];
+  targetAssumptions: string;
 }
 
 export interface AiMealPlanResponse {
@@ -110,6 +148,68 @@ export interface AiMealPlanResponse {
   status: string;
   plan: GeneratedAiMealPlan | null;
   note: string;
+  generationContextId: string | null;
+  planType?: NutritionPlanType;
+  startDate?: string;
+  days?: GeneratedNutritionPlanDay[];
+}
+
+export type NutritionPlanType = 'DAILY' | 'WEEKLY';
+
+export interface GeneratedNutritionPlanDay {
+  date: string;
+  meals: GeneratedAiMeal[];
+  dailyNutrition: EstimatedMealNutrition;
+  shoppingList: string[];
+  alternatives: string[];
+}
+
+export interface NutritionPlanView {
+  id: number;
+  name: string;
+  goal: string;
+  planType: NutritionPlanType;
+  startDate: string;
+  endDate: string;
+  version: number;
+  days: NutritionPlanDayView[];
+}
+
+export interface NutritionPlanDayView {
+  id: number;
+  date: string;
+  meals: NutritionPlanMealView[];
+}
+
+export interface NutritionPlanMealView {
+  id: number;
+  name: string;
+  mealType: NutritionMealType;
+  servingSizeGrams: number;
+  preparationInstructions: string;
+  estimatedNutrition: EstimatedMealNutrition;
+  nutritionSource: string;
+  foods: { foodId: number | null; name: string; servings: number }[];
+}
+
+export interface SaveNutritionPlan {
+  generationContextId: string;
+  planType: NutritionPlanType;
+  startDate: string;
+  planName: string;
+  goal: string;
+  days: {
+    date: string;
+    meals: {
+      name: string;
+      mealType: NutritionMealType;
+      servingSizeGrams: number;
+      preparationInstructions: string;
+      foods: { name: string; servings: number; foodId: number | null }[];
+      estimatedNutrition: EstimatedMealNutrition;
+      nutritionSource: string;
+    }[];
+  }[];
 }
 
 export interface GeneratedAiMealPlan {
@@ -124,6 +224,7 @@ export interface GeneratedAiMealPlan {
 export interface GeneratedAiMeal {
   name: string;
   mealType: NutritionMealType;
+  servingSizeGrams: number;
   foods: { name: string; servings: number; foodId: number | null }[];
   preparationInstructions: string;
   estimatedNutrition: EstimatedMealNutrition;
@@ -135,17 +236,21 @@ export interface EstimatedMealNutrition {
   proteinGrams: number;
   carbohydrateGrams: number;
   fatGrams: number;
+  fiberGrams: number;
+  sodiumMg: number;
 }
 
 export interface SaveGeneratedMealPlan {
+  generationContextId: string;
   planName: string;
   goal: string;
-  restrictions: string[];
   meals: {
     name: string;
     mealType: NutritionMealType;
+    servingSizeGrams: number;
     preparationInstructions: string;
-    foods: { foodId: number; servings: number }[];
+    ingredients: { name: string; servings: number }[];
+    estimatedNutrition: EstimatedMealNutrition;
   }[];
 }
 
@@ -171,6 +276,40 @@ export class NutritionApiService {
 
   getMealPlans(): Observable<NutritionMealPlan[]> {
     return this.http.get<NutritionMealPlan[]>('/api/nutrition/meal-plans');
+  }
+
+  getNutritionPlans(): Observable<NutritionPlanView[]> {
+    return this.http.get<NutritionPlanView[]>('/api/nutrition/plans');
+  }
+
+  getNutritionPlan(planId: number): Observable<NutritionPlanView> {
+    return this.http.get<NutritionPlanView>(`/api/nutrition/plans/${planId}`);
+  }
+
+  generatePersistentPlan(payload: {
+    planType: NutritionPlanType;
+    startDate: string;
+    restrictions: string[];
+  }): Observable<AiMealPlanResponse> {
+    return this.http.post<AiMealPlanResponse>('/api/nutrition/assistant/plans/draft', payload);
+  }
+
+  savePersistentPlan(payload: SaveNutritionPlan): Observable<NutritionPlanView> {
+    return this.http.post<NutritionPlanView>('/api/nutrition/plans', payload);
+  }
+
+  regeneratePlanDay(planId: number, date: string, expectedVersion: number): Observable<NutritionPlanView> {
+    return this.http.post<NutritionPlanView>(
+      `/api/nutrition/plans/${planId}/days/${encodeURIComponent(date)}/regenerate`,
+      { expectedVersion }
+    );
+  }
+
+  replacePlanMeal(planId: number, mealId: number, expectedVersion: number): Observable<NutritionPlanView> {
+    return this.http.post<NutritionPlanView>(
+      `/api/nutrition/plans/${planId}/meals/${mealId}/replace`,
+      { expectedVersion }
+    );
   }
 
   createMealPlan(payload: CreateNutritionMealPlan): Observable<NutritionMealPlan> {
@@ -223,6 +362,34 @@ export class NutritionApiService {
 
   saveProfile(payload: Partial<NutritionProfile>): Observable<NutritionProfile> {
     return this.http.post<NutritionProfile>('/api/nutrition/profiles', payload);
+  }
+
+  calculateGoalTimeline(): Observable<NutritionGoalTimeline> {
+    return this.http.get<NutritionGoalTimeline>('/api/nutrition/calculations/goal-timeline');
+  }
+
+  getHydrationDay(date: string): Observable<HydrationDay> {
+    return this.http.get<HydrationDay>('/api/nutrition/hydration', {
+      params: new HttpParams().set('date', date)
+    });
+  }
+
+  getHydrationHistory(from: string, to: string): Observable<HydrationLog[]> {
+    return this.http.get<HydrationLog[]>('/api/nutrition/hydration/history', {
+      params: new HttpParams().set('from', from).set('to', to)
+    });
+  }
+
+  addHydrationLog(payload: { consumedAt?: string | null; waterMl: number }): Observable<HydrationDay> {
+    return this.http.post<HydrationDay>('/api/nutrition/hydration', payload);
+  }
+
+  correctHydrationLog(logId: number, payload: { consumedAt?: string | null; waterMl: number }): Observable<HydrationDay> {
+    return this.http.put<HydrationDay>(`/api/nutrition/hydration/${logId}`, payload);
+  }
+
+  deleteHydrationLog(logId: number): Observable<void> {
+    return this.http.delete<void>(`/api/nutrition/hydration/${logId}`);
   }
 
   calculateNutrition(foodIds: number[], servings?: number[]): Observable<NutritionCalculation> {

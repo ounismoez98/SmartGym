@@ -16,6 +16,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -46,6 +49,9 @@ class NutritionControllerTest {
     private MealPlanRepository mealPlanRepository;
 
     @Autowired
+    private NutritionPlanRepository nutritionPlanRepository;
+
+    @Autowired
     private FoodJournalRepository foodJournalRepository;
 
     @Autowired
@@ -55,16 +61,25 @@ class NutritionControllerTest {
     private NutritionProfileRepository nutritionProfileRepository;
 
     @Autowired
+    private MealPlanGenerationContextRepository generationContextRepository;
+
+    @Autowired
+    private HydrationLogRepository hydrationLogRepository;
+
+    @Autowired
     @Qualifier("llmExecutor")
     private ThreadPoolTaskExecutor llmExecutor;
 
     @BeforeEach
     void clearNutritionData() {
+        nutritionPlanRepository.deleteAll();
         mealPlanRepository.deleteAll();
         foodJournalRepository.deleteAll();
         bodyMeasurementRepository.deleteAll();
         nutritionProfileRepository.deleteAll();
+        hydrationLogRepository.deleteAll();
         foodRepository.deleteAll();
+        generationContextRepository.deleteAll();
     }
 
     @Test
@@ -407,6 +422,158 @@ class NutritionControllerTest {
     }
 
     @Test
+    void profilePersistsTargetsAndSeparateFoodPreferencesAndProvidesAnExplainableTimeline() throws Exception {
+        String requestedDate = java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusWeeks(52).toString();
+        String profileRequest = """
+                {
+                  "profileName":"Goal profile",
+                  "goal":"weight loss",
+                  "dietaryPreference":"balanced",
+                  "activityLevel":"moderate",
+                  "age":30,
+                  "heightCm":180,
+                  "weightKg":80,
+                  "targetCalories":2000,
+                  "calorieTargetMode":"MANUAL",
+                  "targetWeightKg":70,
+                  "targetDate":"%s",
+                  "allergies":["peanuts"],
+                  "intolerances":["lactose"],
+                  "dislikedFoods":["olives"],
+                  "preferredIngredients":["lentils"],
+                  "budgetPreference":"LOW",
+                  "maxPreparationMinutes":30,
+                  "cookingPreference":"One-pan meals"
+                }
+                """.formatted(requestedDate);
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON).content(profileRequest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetWeightKg").value(70.0))
+                .andExpect(jsonPath("$.targetDate").value(requestedDate))
+                .andExpect(jsonPath("$.allergies[0]").value("peanuts"))
+                .andExpect(jsonPath("$.intolerances[0]").value("lactose"))
+                .andExpect(jsonPath("$.dislikedFoods[0]").value("olives"))
+                .andExpect(jsonPath("$.preferredIngredients[0]").value("lentils"))
+                .andExpect(jsonPath("$.budgetPreference").value("LOW"))
+                .andExpect(jsonPath("$.maxPreparationMinutes").value(30))
+                .andExpect(jsonPath("$.cookingPreference").value("One-pan meals"));
+
+        mockMvc.perform(get("/api/nutrition/profiles").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetWeightKg").value(70.0))
+                .andExpect(jsonPath("$.allergies[0]").value("peanuts"));
+        mockMvc.perform(get("/api/nutrition/calculations/goal-timeline").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.minimumWeeks").value(20))
+                .andExpect(jsonPath("$.maximumWeeks").value(40))
+                .andExpect(jsonPath("$.requestedDateStatus").value("LATER_THAN_ESTIMATE"))
+                .andExpect(jsonPath("$.assumptions").value(
+                        org.hamcrest.Matchers.containsString("0.25–0.5 kg/week")));
+
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(profileRequest.replace(",\n  \"allergies\":[\"peanuts\"]"
+                                        + ",\n  \"intolerances\":[\"lactose\"]"
+                                        + ",\n  \"dislikedFoods\":[\"olives\"]"
+                                        + ",\n  \"preferredIngredients\":[\"lentils\"]"
+                                        + ",\n  \"budgetPreference\":\"LOW\""
+                                        + ",\n  \"maxPreparationMinutes\":30"
+                                        + ",\n  \"cookingPreference\":\"One-pan meals\"", "")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allergies[0]").value("peanuts"))
+                .andExpect(jsonPath("$.intolerances[0]").value("lactose"));
+    }
+
+    @Test
+    void profileRejectsUnsafeIncompatibleMinorAndPastDateTargets() throws Exception {
+        String base = """
+                {"profileName":"Goal","goal":"weight loss","dietaryPreference":"balanced",
+                "activityLevel":"moderate","age":30,"heightCm":180,"weightKg":80,
+                "targetCalories":2000,"calorieTargetMode":"MANUAL","targetWeightKg":%s}
+                """;
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("50")))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("BMI below 18.5")));
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("85")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("agree with a supported")));
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.replace("\"age\":30", "\"age\":17").formatted("70")))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("not supported for minors")));
+        String pastDate = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1).toString();
+        mockMvc.perform(post("/api/nutrition/profiles").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"profileName":"Goal","goal":"weight loss","dietaryPreference":"balanced",
+                                "activityLevel":"moderate","age":30,"heightCm":180,"weightKg":80,
+                                "targetCalories":2000,"calorieTargetMode":"MANUAL","targetWeightKg":70,
+                                "targetDate":"%s"}
+                                """.formatted(pastDate)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("future")));
+    }
+
+    @Test
+    void hydrationLogsPersistAreCorrectableMemberScopedAndValidateAmountsAndTimestamps() throws Exception {
+        java.time.Instant now = java.time.Instant.now();
+        java.time.LocalDate date = now.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        String payload = objectMapper.writeValueAsString(new NutritionService.HydrationRequest(now, 350));
+        long id = objectMapper.readTree(mockMvc.perform(post("/api/nutrition/hydration")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON).content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.date").value(date.toString()))
+                .andExpect(jsonPath("$.consumedMl").value(350))
+                .andExpect(jsonPath("$.targetMl").value(2000))
+                .andExpect(jsonPath("$.targetAssumptions").value(
+                        org.hamcrest.Matchers.containsString("excludes moisture in food")))
+                .andReturn().getResponse().getContentAsString()).path("logs").get(0).path("id").asLong();
+
+        mockMvc.perform(get("/api/nutrition/hydration").with(member("member-123"))
+                        .param("date", date.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.logs[0].id").value(id));
+        mockMvc.perform(get("/api/nutrition/hydration").with(member("member-456"))
+                        .param("date", date.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.consumedMl").value(0))
+                .andExpect(jsonPath("$.logs").isEmpty());
+        mockMvc.perform(get("/api/nutrition/hydration/history").with(member("member-123"))
+                        .param("from", date.toString()).param("to", date.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].waterMl").value(350));
+
+        mockMvc.perform(put("/api/nutrition/hydration/{id}", id).with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new NutritionService.HydrationRequest(now, 500))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.consumedMl").value(500));
+        mockMvc.perform(put("/api/nutrition/hydration/{id}", id).with(member("member-456"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new NutritionService.HydrationRequest(now, 400))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/nutrition/hydration").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new NutritionService.HydrationRequest(now, 2001))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/nutrition/hydration").with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new NutritionService.HydrationRequest(
+                                java.time.Instant.now().plusSeconds(86400), 250))))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/nutrition/hydration/history").with(member("member-123"))
+                        .param("from", date.toString()).param("to", date.plusDays(367).toString()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void conventionalGoalAndActivityMappingsAreRecognizedWithoutEnablingEnergyEstimates() throws Exception {
         assertEquals(NutritionService.GoalCategory.WEIGHT_LOSS,
                 NutritionService.mapGoalCategory(" Weight Loss ").orElseThrow());
@@ -447,8 +614,66 @@ class NutritionControllerTest {
                 .andExpect(jsonPath("$.tdeeCaloriesPerDay").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.goalCategory").value("WEIGHT_LOSS"))
                 .andExpect(jsonPath("$.activityFactor").value(1.9))
-                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("no sex-related input")))
-                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("No value has been assumed")));
+                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("equation input")))
+                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("no values have been assumed")));
+    }
+
+    @Test
+    void automaticCalorieTargetUsesMifflinStJeorActivityAndGoalAdjustment() throws Exception {
+        mockMvc.perform(post("/api/nutrition/profiles")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileName": "Automatic target",
+                                  "goal": "weight loss",
+                                  "dietaryPreference": "balanced",
+                                  "activityLevel": "moderate",
+                                  "age": 30,
+                                  "heightCm": 180,
+                                  "weightKg": 81,
+                                  "calorieTargetMode": "AUTO",
+                                  "energyEquationSex": "MALE"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.calorieTargetMode").value("AUTO"))
+                .andExpect(jsonPath("$.energyEquationSex").value("MALE"))
+                .andExpect(jsonPath("$.targetCalories").value(2358));
+
+        mockMvc.perform(get("/api/nutrition/calculations/energy").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.bmrCaloriesPerDay").value(1790.0))
+                .andExpect(jsonPath("$.tdeeCaloriesPerDay").value(2774.5))
+                .andExpect(jsonPath("$.goalAdjustedCalories").value(2358))
+                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("not a medical recommendation")));
+    }
+
+    @Test
+    void automaticTargetRemainsUnsetUntilRequiredAdultEquationInputsAreProvided() throws Exception {
+        mockMvc.perform(post("/api/nutrition/profiles")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileName": "Incomplete automatic target",
+                                  "goal": "maintenance",
+                                  "dietaryPreference": "balanced",
+                                  "activityLevel": "moderate",
+                                  "age": 30,
+                                  "heightCm": 180,
+                                  "weightKg": 81,
+                                  "calorieTargetMode": "AUTO"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.targetCalories").value(org.hamcrest.Matchers.nullValue()));
+
+        mockMvc.perform(get("/api/nutrition/calculations/energy").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(false))
+                .andExpect(jsonPath("$.note").value(org.hamcrest.Matchers.containsString("equation input")));
     }
 
     @Test
@@ -572,7 +797,8 @@ class NutritionControllerTest {
                                 {
                                   "goal": "muscle gain",
                                   "targetCalories": 2600,
-                                  "dietStyle": "balanced"
+                                  "dietStyle": "balanced",
+                                  "restrictions": []
                                 }
                                 """))
                 .andExpect(request().asyncStarted())
@@ -601,26 +827,36 @@ class NutritionControllerTest {
     }
 
     @Test
-    void reviewedAiPlanCanBeSavedOnlyUsingFoodsOwnedByAuthenticatedMember() throws Exception {
-        long foodId = createFood("member-123", "Saved oats", 150, 5);
+    void memberCanSaveGeneratedRecipeWithoutExistingFoodLibraryMatches() throws Exception {
+        MealPlanGenerationContext context = generationContextRepository.save(
+                new MealPlanGenerationContext("member-123", List.of("peanuts")));
         String payload = """
                 {
-                  "planName": "Reviewed plan",
+                  "generationContextId": "%s",
+                  "planName": "Healthy week",
                   "goal": "maintenance",
                   "meals": [{
-                    "name": "Breakfast",
-                    "mealType": "BREAKFAST",
-                    "preparationInstructions": "Cook with water.",
-                    "foods": [{"foodId": %d, "servings": 2}]
+                    "name": "Chicken with rice",
+                    "mealType": "LUNCH",
+                    "servingSizeGrams": 420,
+                    "preparationInstructions": "Bake chicken and cook the rice.",
+                    "ingredients": [
+                      {"name": "Chicken breast", "servings": 150},
+                      {"name": "Brown rice", "servings": 100}
+                    ],
+                    "estimatedNutrition": {
+                      "calories": 520, "proteinGrams": 42, "carbohydrateGrams": 55,
+                      "fatGrams": 12, "fiberGrams": 7, "sodiumMg": 390
+                    }
                   }]
                 }
-                """.formatted(foodId);
+                """.formatted(context.getId());
 
         mockMvc.perform(post("/api/nutrition/assistant/plan/save")
                         .with(member("member-456"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isBadRequest());
         mockMvc.perform(get("/api/nutrition/meal-plans").with(member("member-456")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
@@ -628,8 +864,30 @@ class NutritionControllerTest {
         mockMvc.perform(post("/api/nutrition/assistant/plan/save")
                         .with(member("member-123"))
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload.replace("\"generationContextId\": \"" + context.getId() + "\",", "")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("generation context")));
+
+        mockMvc.perform(post("/api/nutrition/assistant/plan/save")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content(payload.replace("\"goal\": \"maintenance\",",
-                                "\"goal\": \"maintenance\", \"restrictions\": [\"oats allergy\"],")))
+                                "\"goal\": \"maintenance\", \"restrictions\": [\"chicken allergy\"],")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("original generation context")));
+
+        mockMvc.perform(post("/api/nutrition/assistant/plan/save")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload.replace("\"goal\": \"maintenance\",",
+                                "\"goal\": \"maintenance\", \"restrictions\": [],")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("original generation context")));
+
+        mockMvc.perform(post("/api/nutrition/assistant/plan/save")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload.replace("Chicken breast", "Peanut butter")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("excluded")));
 
@@ -638,9 +896,30 @@ class NutritionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].name").value("Reviewed plan - Breakfast"))
-                .andExpect(jsonPath("$[0].targetCalories").value(300.0))
-                .andExpect(jsonPath("$[0].description").value(org.hamcrest.Matchers.containsString("Cook with water.")));
+                .andExpect(jsonPath("$[0].name").value("Chicken with rice"))
+                .andExpect(jsonPath("$[0].targetCalories").value(520.0))
+                .andExpect(jsonPath("$[0].description").value(org.hamcrest.Matchers.containsString("Brown rice")))
+                .andExpect(jsonPath("$[0].foods[0].foodName").value("Chicken with rice"));
+
+        MealPlan savedPlan = mealPlanRepository.findAll().getFirst();
+        org.junit.jupiter.api.Assertions.assertEquals(context.getId(),
+                savedPlan.getGenerationContext().getId());
+        org.junit.jupiter.api.Assertions.assertEquals(Set.of("peanuts"),
+                generationContextRepository.findById(context.getId()).orElseThrow().getRestrictions());
+
+        mockMvc.perform(post("/api/nutrition/assistant/plan/save")
+                        .with(member("member-123"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("already been used")));
+
+        mockMvc.perform(get("/api/nutrition/foods").with(member("member-123")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Chicken with rice"))
+                .andExpect(jsonPath("$[0].servingSizeGrams").value(420))
+                .andExpect(jsonPath("$[0].calories").value(520.0))
+                .andExpect(jsonPath("$[0].brand").value(org.hamcrest.Matchers.containsString("AI-generated")));
     }
 
     @Test

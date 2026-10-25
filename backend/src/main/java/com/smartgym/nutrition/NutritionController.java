@@ -12,6 +12,7 @@ import org.springframework.core.task.TaskRejectedException;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -62,6 +63,17 @@ public class NutritionController {
     @GetMapping("/meal-plans")
     public List<MealPlanResponse> listMealPlans(@AuthenticationPrincipal Jwt jwt) {
         return nutritionService.listMealPlans(jwt.getSubject()).stream().map(this::toResponse).toList();
+    }
+
+    @GetMapping("/plans")
+    public List<NutritionPlanApi.PlanView> listPersistentPlans(@AuthenticationPrincipal Jwt jwt) {
+        return nutritionService.listPersistentPlans(jwt.getSubject());
+    }
+
+    @GetMapping("/plans/{planId}")
+    public NutritionPlanApi.PlanView getPersistentPlan(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable Long planId) {
+        return nutritionService.getPersistentPlan(jwt.getSubject(), planId);
     }
 
     @PutMapping("/meal-plans/{mealPlanId}")
@@ -136,6 +148,42 @@ public class NutritionController {
         return toResponse(nutritionService.getCurrentProfile(jwt.getSubject()));
     }
 
+    @GetMapping("/calculations/goal-timeline")
+    public NutritionService.GoalTimelineResult calculateGoalTimeline(@AuthenticationPrincipal Jwt jwt) {
+        return nutritionService.calculateGoalTimeline(jwt.getSubject());
+    }
+
+    @PostMapping("/hydration")
+    public NutritionService.HydrationView addHydrationLog(@AuthenticationPrincipal Jwt jwt,
+            @RequestBody NutritionService.HydrationRequest request) {
+        return nutritionService.addHydrationLog(jwt.getSubject(), request);
+    }
+
+    @GetMapping("/hydration")
+    public NutritionService.HydrationView getHydrationDay(@AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) LocalDate date) {
+        LocalDate requestedDate = date == null ? LocalDate.now(java.time.ZoneOffset.UTC) : date;
+        return nutritionService.getHydrationDay(jwt.getSubject(), requestedDate);
+    }
+
+    @GetMapping("/hydration/history")
+    public List<NutritionService.HydrationLogView> getHydrationHistory(@AuthenticationPrincipal Jwt jwt,
+            @RequestParam LocalDate from, @RequestParam LocalDate to) {
+        return nutritionService.getHydrationHistory(jwt.getSubject(), from, to);
+    }
+
+    @PutMapping("/hydration/{logId}")
+    public NutritionService.HydrationView correctHydrationLog(@AuthenticationPrincipal Jwt jwt,
+            @PathVariable Long logId, @RequestBody NutritionService.HydrationRequest request) {
+        return nutritionService.correctHydrationLog(jwt.getSubject(), logId, request);
+    }
+
+    @DeleteMapping("/hydration/{logId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteHydrationLog(@AuthenticationPrincipal Jwt jwt, @PathVariable Long logId) {
+        nutritionService.deleteHydrationLog(jwt.getSubject(), logId);
+    }
+
     @GetMapping("/calculations")
     public NutritionCalculationResponse calculateNutrition(@AuthenticationPrincipal Jwt jwt,
                                                          @RequestParam(required = false) List<Long> foodIds,
@@ -190,12 +238,80 @@ public class NutritionController {
         }
     }
 
+    @PostMapping("/assistant/plans/draft")
+        public CompletableFuture<ResponseEntity<Object>> generatePersistentPlanDraft(
+                @AuthenticationPrincipal Jwt jwt,
+                @RequestBody NutritionPlanApi.GenerateRequest request) {
+            try {
+                return nutritionService.generatePersistentPlanDraft(jwt.getSubject(), request)
+                        .thenApply(value -> ResponseEntity.<Object>ok(value))
+                        .exceptionally(this::asyncError);
+            } catch (TaskRejectedException exception) {
+                return CompletableFuture.completedFuture(ResponseEntity.<Object>status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(new NutritionPlanApi.DraftResponse(false, "UNAVAILABLE",
+                                "The meal-plan assistant is busy. Please try again shortly.",
+                                null, request == null ? null : request.planType(),
+                                request == null ? null : request.startDate(), null, null, null, List.of())));
+            }
+        }
+
+        @PostMapping("/plans")
+        public NutritionPlanApi.PlanView savePersistentPlan(
+                @AuthenticationPrincipal Jwt jwt,
+                @RequestBody NutritionPlanApi.SaveRequest request) {
+            return nutritionService.savePersistentPlan(jwt.getSubject(), request);
+        }
+
+        @PostMapping("/plans/{planId}/days/{date}/regenerate")
+        public CompletableFuture<ResponseEntity<Object>> regeneratePlanDay(
+                @AuthenticationPrincipal Jwt jwt, @PathVariable Long planId, @PathVariable LocalDate date,
+                @RequestBody NutritionPlanApi.VersionRequest request) {
+            if (request == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The expected plan version is required.");
+            }
+            try {
+                return nutritionService.regeneratePlanDay(jwt.getSubject(), planId, date, request.expectedVersion())
+                        .thenApply(value -> ResponseEntity.<Object>ok(value))
+                        .exceptionally(this::asyncError);
+            } catch (TaskRejectedException exception) {
+                return CompletableFuture.completedFuture(ResponseEntity.<Object>status(HttpStatus.SERVICE_UNAVAILABLE).build());
+            }
+        }
+
+        @PostMapping("/plans/{planId}/meals/{mealId}/replace")
+        public CompletableFuture<ResponseEntity<Object>> replacePlanMeal(
+                @AuthenticationPrincipal Jwt jwt, @PathVariable Long planId, @PathVariable Long mealId,
+                @RequestBody NutritionPlanApi.VersionRequest request) {
+            if (request == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The expected plan version is required.");
+            }
+            try {
+                return nutritionService.replacePlanMeal(jwt.getSubject(), planId, mealId, request.expectedVersion())
+                        .thenApply(value -> ResponseEntity.<Object>ok(value))
+                        .exceptionally(this::asyncError);
+            } catch (TaskRejectedException exception) {
+                return CompletableFuture.completedFuture(ResponseEntity.<Object>status(HttpStatus.SERVICE_UNAVAILABLE).build());
+            }
+        }
+
+        private ResponseEntity<Object> asyncError(Throwable throwable) {
+            Throwable cause = throwable instanceof CompletionException && throwable.getCause() != null
+                    ? throwable.getCause() : throwable;
+            if (cause instanceof ResponseStatusException responseStatusException) {
+                return ResponseEntity.status(responseStatusException.getStatusCode())
+                        .<Object>body(new ApiError(responseStatusException.getReason()));
+            }
+            logger.warn("Nutrition plan operation failed.", cause);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+    }
+
     private AiPlanResponse toAiPlanResponse(NutritionService.MealPlanSuggestion suggestion) {
-        return new AiPlanResponse(suggestion.available(), suggestion.status(), suggestion.plan(), suggestion.note());
+        return new AiPlanResponse(suggestion.available(), suggestion.status(), suggestion.plan(),
+                suggestion.note(), suggestion.generationContextId());
     }
 
     private AiPlanResponse unavailableAiPlan(String note) {
-        return new AiPlanResponse(false, "UNAVAILABLE", null, note);
+        return new AiPlanResponse(false, "UNAVAILABLE", null, note, null);
     }
 
     @PostMapping("/assistant/plan/save")
@@ -235,7 +351,14 @@ public class NutritionController {
                 nutritionProfile.getGoal(), nutritionProfile.getDietaryPreference(),
                 nutritionProfile.getActivityLevel(), nutritionProfile.getAge(),
                 nutritionProfile.getHeightCm(), nutritionProfile.getWeightKg(),
-                nutritionProfile.getTargetCalories());
+                nutritionProfile.getTargetCalories(), nutritionProfile.getCalorieTargetMode(),
+                nutritionProfile.getEnergyEquationSex(), nutritionProfile.getTargetWeightKg(),
+                nutritionProfile.getTargetDate(), nutritionProfile.getAllergies().stream().sorted().toList(),
+                nutritionProfile.getIntolerances().stream().sorted().toList(),
+                nutritionProfile.getDislikedFoods().stream().sorted().toList(),
+                nutritionProfile.getPreferredIngredients().stream().sorted().toList(),
+                nutritionProfile.getBudgetPreference(), nutritionProfile.getMaxPreparationMinutes(),
+                nutritionProfile.getCookingPreference());
     }
 
     private NutritionCalculationResponse toResponse(NutritionService.NutritionCalculationResult result) {
@@ -263,7 +386,14 @@ public class NutritionController {
     public record NutritionProfileResponse(Long id, String profileName, String goal,
                                           String dietaryPreference, String activityLevel,
                                           Integer age, Double heightCm, Double weightKg,
-                                          Integer targetCalories) {}
+                                          Integer targetCalories,
+                                          NutritionProfile.CalorieTargetMode calorieTargetMode,
+                                          NutritionProfile.EnergyEquationSex energyEquationSex,
+                                          Double targetWeightKg, LocalDate targetDate,
+                                          List<String> allergies, List<String> intolerances,
+                                          List<String> dislikedFoods, List<String> preferredIngredients,
+                                          String budgetPreference, Integer maxPreparationMinutes,
+                                          String cookingPreference) {}
 
     public record NutritionCalculationResponse(double calories, double proteinGrams,
                                               double carbohydrateGrams, double fatGrams,
@@ -278,5 +408,6 @@ public class NutritionController {
     public record ApiError(String message) {}
 
     public record AiPlanResponse(boolean available, String status,
-                                 NutritionService.GeneratedMealPlan plan, String note) {}
+                                 NutritionService.GeneratedMealPlan plan, String note,
+                                 String generationContextId) {}
 }

@@ -2,8 +2,9 @@
 
 Smart Gym is a gym-management platform using Angular, Spring Boot, PostgreSQL,
 and Keycloak. The repository includes the authenticated membership vertical
-slice and a member-scoped Nutrition & Body Tracking module (M4). Courses and
-training API prefixes are protected but their module services are not included.
+slice and a member-scoped Nutrition & Body Tracking module (M4 in the existing
+project/module map). Courses and training API prefixes are protected but their
+module services are not included.
 
 ## Development ownership
 
@@ -73,11 +74,12 @@ should use the Nginx `/api/...` URLs.
 
 The API uses Flyway migrations under
 `backend/src/main/resources/db/migration`. `V1__baseline.sql` creates the
-current PostgreSQL schema for both membership and nutrition entities. New
-installations using a fresh, empty database apply this migration on first API
-startup; Hibernate validates the mapped schema and does not modify it. If the
-Compose PostgreSQL volume already contains a database, review the existing
-database procedure below before starting the API.
+initial PostgreSQL schema; V2–V5 add calorie-target mode, generation-context
+snapshots, persistent dated plans, and saved goals/preferences/hydration.
+New installations using a fresh, empty database apply the complete migration
+sequence on first API startup; Hibernate validates the mapped schema and does
+not modify it. If the Compose PostgreSQL volume already contains a database,
+review the existing database procedure below before starting the API.
 
 For an existing database, first take a database backup and compare its schema
 with `V1__baseline.sql`. Do not baseline a database with unrelated or
@@ -112,8 +114,9 @@ not operational.
 The Compose stack routes `/api/membership`, `/api/courses`, `/api/training`,
 and `/api/nutrition` to the secured business API while preserving the full
 prefix. Nutrition endpoints provide member-scoped foods, meal plans, food
-journal entries, body measurements, profiles, nutritional calculations, and
-an optional local AI meal-plan assistant. Courses and training remain
+journal entries, body measurements, profiles, nutritional calculations,
+persistent meal plans, hydration, and an optional Groq meal-plan assistant.
+Courses and training remain
 security-protected and await their module services.
 
 ## Nutrition & Body Tracking (Module 4)
@@ -153,10 +156,29 @@ Maven, Node.js, or npm is required for the container-based commands below.
    files or command history.
 4. Open `http://localhost:8088`, sign in with an account assigned the
    `MEMBER` or `ADMIN` role, and select **Nutrition** from the dashboard.
-   Enter profile details, add foods, then log journal entries or measurements.
-   The Nutrition page includes daily totals, profile-based BMI and saved-target
-   macro estimates, food and meal-plan CRUD, journal CRUD, and measurement
-   history. The AI assistant is optional; see its configuration below.
+   Use the Nutrition workspace's Overview, My Plan, My Progress, Food Library,
+   and Food Journal views. New members can complete the six-step profile setup;
+   saved profile and goal values use the authenticated nutrition profile API.
+   Choose automatic daily calories to estimate an adult target from age,
+   height, current weight, activity, goal, and the optional Mifflin–St Jeor
+   equation input; or choose a manual target. Automatic estimates recalculate
+   when the profile is saved and are not medical advice. The Nutrition page
+   includes daily totals, profile-based BMI and saved-target macro estimates,
+   food and meal-plan CRUD, journal CRUD, and measurement history. Local
+   illustrated meal cards are used because this repository has no food-photo
+   assets; the UI does not fetch unstable remote images.
+   Members generate profile-based recipe suggestions on their own Nutrition
+   page, review ingredients, quantities, preparation instructions and
+   estimated nutrition, then save daily or seven-day plans to their account.
+   Saved plans have dated days and persisted meals; members can regenerate one
+   day or replace one meal. Coaches can open **Coach Nutrition** to review and
+   edit only assigned members' saved plans and foods. Coaches do not generate
+   or approve member plans. Assignment, ownership and saved generation
+   restrictions are checked server-side. Profile targets, goal estimates,
+   separate allergy/intolerance/dislike/ingredient preferences, cooking
+   preferences and drinking-water logs are persisted through authenticated
+   APIs. Shopping lists and alternatives remain review-only and are not
+   persisted. The AI assistant is optional; see its configuration below.
 
 The `.env` values directly required by Compose are the Keycloak bootstrap
 username/password, PostgreSQL password, and provisioning token. Compose sets
@@ -183,39 +205,66 @@ header and is not included in the request body or logged by the adapter.
 
 The request uses the configured model, `system` and `user` chat messages, and
 `response_format` with `type: json_schema`, `strict: true`, and a meal-plan
-schema. See Groq's [Structured Outputs documentation](https://console.groq.com/docs/structured-outputs).
+schema, with an explicit completion budget. It requests exactly three concise
+meals per generated day and omits shopping-list and alternative suggestions
+from the model response to reduce avoidable output. Those suggestions remain
+unavailable for AI-generated drafts; saved-plan behavior is unchanged. See
+Groq's [Structured Outputs documentation](https://console.groq.com/docs/structured-outputs).
+If Groq specifically rejects the strict schema format with HTTP 400/422, the
+backend retries once using JSON-object mode. It then applies the same DTO,
+numeric, meal-type, serving, size, and restriction checks before returning
+anything; this fallback does not bypass application validation. A provider
+error explicitly identifying completion-token exhaustion is not retried, and
+is reported separately from a strict-schema compatibility rejection.
 Groq's response is read from `choices[0].message.content`, which must contain
 the plan JSON. The application then performs its own DTO, numeric, meal-type,
 serving, size, and restriction checks. Strict JSON mode does not replace
 application validation.
 
-Only the saved goal, saved calorie target, dietary preference, explicit
-request restrictions, and member-owned food names/nutrition are sent as
-generation context. JWTs, member subjects, profile age, height, and weight
-are not sent. Do not add sensitive personal data to the prompt.
+Meal-plan prompts generate complete recipes whether or not their ingredients
+exist in the saved food library, with ingredient quantities and preparation
+instructions. Saved foods are optional matches and must not distort the recipe.
+The model also estimates a complete meal serving's weight, calories, protein,
+carbohydrates, fat, fiber, and sodium for coach review.
+Prompts favor lean protein, vegetables, legumes, whole grains, and lighter
+cooking methods while limiting deep-frying, processed meats, pastries, and
+excess salt. These are generation preferences, not a medical or nutritional
+guarantee; review meals and estimates before saving.
+
+Saved goal, calorie target, dietary style, supported food preferences,
+explicit request restrictions, and optional member-owned food names/nutrition
+are sent as generation context. JWTs, member subjects, profile age, height,
+and weight are not sent. Do not add sensitive personal data to the prompt.
 
 If `GROQ_API_KEY` is empty, generation returns `UNAVAILABLE` without a
 network call. The model default is `openai/gpt-oss-20b`; override it with a
 model currently available to your account using `GROQ_MODEL`. Authentication
 errors, rate limits, timeouts, network failures, and malformed responses
-produce non-secret unavailable messages. The call continues to run on the
-existing bounded asynchronous executor. No live Groq request has been made
+produce non-secret unavailable messages. HTTP 400/422 responses point to model
+availability and strict JSON Schema support; 404 identifies an unavailable
+model, 413 identifies an oversized request, and 5xx responses are reported as
+temporary provider failures. For 429 rate limits, the API includes a bounded
+`Retry-After` hint when Groq supplies one and otherwise advises checking
+account usage/model limits. Provider response bodies are not returned to the
+member. The call continues to run on the existing bounded asynchronous executor. No live Groq request has been made
 as part of this implementation; generation against an active account/model
 remains unverified.
 
-Groq-hosted model output is untrusted. Explicit restrictions are checked
-before the suggestion is returned and are checked again when the member
-saves a reviewed plan. This does not establish allergy safety or medical
-suitability. Nutrition is recalculated from saved food data when a meal's
-foods all match; otherwise the values remain model estimates.
+Groq-hosted model output is untrusted. Explicit and saved restrictions,
+including the default pork and pork-derived ingredient exclusion, are checked
+before a suggestion is returned and again when a member saves a plan or a
+member/assigned coach edits a saved meal. Each saved plan retains its
+generation context; later profile changes do not rewrite that context. These
+checks do not establish allergy safety or medical suitability. Nutrition
+remains an estimate and requires member review before saving.
 Inference runs outside servlet request threads on a bounded pool (up to four
 active calls and eight queued requests). The existing plan-generation route
 keeps its response shape; saturated requests return an explicit unavailable
 response instead of adding unbounded work.
-Review and edit every meal before saving. The current schema stores each meal
-as a separate member-owned meal-plan row and can preserve preparation
-instructions in its description. Shopping lists and alternatives are shown
-for review but are not persisted.
+Review every meal before saving. Daily and weekly plans use a persisted plan,
+dated-day, meal and meal-item relationship. The older individual meal-plan
+records remain available for compatibility. Shopping lists and alternatives
+are shown for review but are not persisted.
 
 ### Nutrition API
 
@@ -245,21 +294,53 @@ item references that food.
 | `GET /body-measurements` | List the authenticated subject's measurement history. |
 | `PUT /body-measurements/{measurementId}` | Update an owned measurement, with create validation. |
 | `DELETE /body-measurements/{measurementId}` | Delete an explicitly selected owned measurement record. |
-| `POST /profiles` | Create or update the caller's latest profile. Profile name, goal, dietary preference, and activity level are required; optional age, height (cm), weight (kg), and target calories must be positive when provided. Text values have field-specific maximum lengths. |
+| `POST /profiles` | Create or update the caller's latest profile, including goal, current/target weight, optional desired date, dietary style, allergies, intolerances, dislikes, preferred ingredients, budget and preparation preferences. Identity comes from the JWT. Targets require an adult profile, valid current measurements, a compatible supported goal, and a target not below the adult BMI 18.5 screening threshold. |
 | `GET /profiles` | Read the caller's latest profile; returns `404` when none exists. |
+| `GET /calculations/goal-timeline` | Return a deterministic approximate range for supported adult weight-loss goals only; includes the 0.25–0.5 kg/week assumptions and comparison with an optional requested date. Other goals, minors, and missing/invalid inputs return an unavailable response. |
+| `POST /hydration` | Add a drinking-water log (1–2,000 mL). The server supplies the timestamp if omitted; member identity is derived from the JWT. |
+| `GET /hydration?date=YYYY-MM-DD` | Read one member-owned UTC-day total, logs and the general estimated 2,000 mL/day target. This tracks drinks, not moisture from food. |
+| `GET /hydration/history?from=YYYY-MM-DD&to=YYYY-MM-DD` | Read the caller's bounded hydration history. |
+| `PUT /hydration/{logId}` / `DELETE /hydration/{logId}` | Correct or remove an owned log, with amount, timestamp and daily-total validation. |
 | `GET /calculations?foodIds={id}&servings={n}` | Sum calories, macros, fiber, and sodium for the supplied owned food IDs. Repeat `foodIds` and `servings` parameters for multiple foods. Servings are optional (default one per food); when supplied, there must be exactly one positive finite quantity per ID. |
-| `GET /calculations/bmi` | Calculate BMI from profile kilograms and centimetres converted to metres. Requires a profile (`404` if absent); returns `422` if required height or weight is missing/invalid. The response labels BMI as an estimate, not body-fat percentage. |
+| `GET /calculations/bmi` | Calculate BMI from profile kilograms and centimetres converted to metres. Returns `422` for a known minor or missing/invalid height or weight. This is a screening measurement, not a diagnosis. |
 | `GET /calculations/macros` | Estimate protein (1.6 g/kg), fat (25% of the saved calorie target), and carbohydrates from remaining calories. Requires a profile (`404` if absent) with positive saved weight and target calories; returns `422` if inputs are missing or the target cannot support nonnegative carbohydrates. This uses the manually saved target, not TDEE. |
-| `GET /calculations/energy` | With a profile present, return an unavailable energy estimate and explanation. Returns `404` if there is no profile. Current profile fields do not provide the required Mifflin–St Jeor input; BMR/TDEE are not calculated. |
+| `GET /calculations/energy` | Calculate an adult Mifflin–St Jeor estimate when age, height, weight, equation selection, supported activity and goal are available; otherwise return an unavailable response with the missing requirement. This is an estimate, not medical advice. |
 | `GET /food-journal/daily?date=YYYY-MM-DD` | Return the caller's daily totals and meal-level calories, macros, fiber, and sodium for the required date, scaled by logged servings. |
-| `POST /assistant/plan` | Request an AI suggestion. The UI sends `{"restrictions":["..."]}`; profile, target, and saved-food context come from the authenticated caller's records. Returns `UNAVAILABLE` when not configured, unreachable, malformed, or rejected; executor saturation/failure returns `503`. |
-| `POST /assistant/plan/save` | Save a reviewed plan using `planName`, `goal`, `restrictions`, and 1–12 meals; each meal requires a supported type, name, preparation instructions, and one or more owned saved-food IDs with positive servings. Restrictions and ownership are rechecked before persistence. |
+| `POST /assistant/plan` | Request a legacy AI suggestion. The UI sends request restrictions; profile, saved preferences and food context come from the authenticated caller. An available response includes a server-issued generation-context ID. Returns `UNAVAILABLE` when not configured, unreachable, malformed, or rejected; executor saturation/failure is surfaced. |
+| `POST /assistant/plan/save` | Save a reviewed legacy suggestion. The server resolves the one-time generation context for the authenticated member and rechecks its restrictions rather than trusting save-request restrictions. |
+| `POST /assistant/plans/draft` | Generate a daily or seven-day suggestion for the authenticated member, returning structured dated days and meals with quantities, instructions and supported nutrition estimates. |
+| `POST /plans` | Save the member-reviewed draft as a persistent daily or weekly plan with its immutable generation context. |
+| `GET /plans` / `GET /plans/{planId}` | List or retrieve the caller's saved plans and dated meals. |
+| `POST /plans/{planId}/days/{date}/regenerate` | Regenerate only an owned plan day using its original context and expected plan version. |
+| `POST /plans/{planId}/meals/{mealId}/replace` | Replace one meal while preserving other plan content, using the plan's saved context and version. |
+
+### Coach meal-plan review
+
+Coach nutrition routes are under `/api/nutrition/coach` and require the
+`COACH` application role. Each operation resolves the member profile ID to its
+authenticated member subject and checks the coach assignment server-side:
+
+| Method and path | Behavior |
+| --- | --- |
+| `GET /members/{memberProfileId}/foods` | List foods belonging to an assigned member. |
+| `PUT /members/{memberProfileId}/foods/{foodId}` | Update an assigned member's existing food; the food must belong to that member. |
+| `DELETE /members/{memberProfileId}/foods/{foodId}` | Delete an assigned member's food only when it is not referenced by a journal entry or meal plan. |
+| `GET /members/{memberProfileId}/meal-plans` | Review saved meal plans belonging to an assigned member. |
+| `PUT /members/{memberProfileId}/meal-plans/{mealPlanId}` | Edit a plan belonging to an assigned member; every linked food must also belong to that member. |
+| `GET /members/{memberProfileId}/plans` | List persistent plans for an assigned member. |
+| `PUT /members/{memberProfileId}/plans/{planId}/days/{date}/meals/{mealId}` | Edit a meal in an assigned member's saved plan. The backend checks assignment, ownership, expected version and original plan restrictions. |
+
+Plan-specific generation restrictions are durably stored with the associated
+context and rechecked during save, day regeneration, meal replacement and
+coach edits. Coaches see suggestions only after a member saves them; there is
+no separate persisted draft/review state. Shopping lists and alternatives are
+not persisted. Restriction checks do not guarantee medical or allergy safety.
 
 All meal-type values are `BREAKFAST`, `LUNCH`, `DINNER`, `SNACK`,
-`PRE_WORKOUT`, or `POST_WORKOUT`. Profile goals and dietary preference are
-stored as text; the UI offers weight loss, maintenance, muscle gain and
-balanced/vegetarian/vegan/pescatarian/other choices. No dedicated
-preferences/allergy table exists.
+`PRE_WORKOUT`, or `POST_WORKOUT`. Profile goals and dietary style are stored as
+text; the UI offers weight loss, maintenance, muscle gain and
+balanced/vegetarian/vegan/pescatarian/other choices. Allergy, intolerance,
+dislike and preferred-ingredient lists are stored separately.
 
 ### Build and verification commands
 
@@ -300,15 +381,15 @@ Chrome or Chromium is installed; set `CHROME_BIN` to its executable path on
 Linux. `npm test` runs the tests once. `npm run test:coverage` writes the HTML
 report to `frontend/coverage/smart-gym/index.html` and prints a text summary.
 
-To generate backend line/branch coverage, run `mvn -B test jacoco:report`
-from `backend`. The HTML report is written to `target/site/jacoco/index.html`;
+To run the full backend test suite, package the application, and generate
+JaCoCo coverage, run `mvn -B verify` from `backend`. The HTML report is written to `target/site/jacoco/index.html`;
 machine-readable XML and CSV reports are written alongside it. For Docker
 Maven execution from the repository root:
 
 ```powershell
 $backend = (Resolve-Path .\backend).Path
 docker run --rm --mount "type=bind,source=$backend,target=/workspace" `
-  -w /workspace maven:3.9-eclipse-temurin-21 mvn -B test jacoco:report
+  -w /workspace maven:3.9-eclipse-temurin-21 mvn -B verify
 ```
 
 The opt-in `PostgresNutritionIntegrationTest` requires an isolated PostgreSQL
@@ -318,14 +399,14 @@ provided. Never point these properties at the development or production
 database. It runs Flyway against the supplied database; tests inspect data,
 update and delete only their own rows, and verify migration behavior.
 
-Latest backend test and coverage run (2026-10-24) used all existing H2 tests
-plus the opt-in PostgreSQL tests against a disposable PostgreSQL 16 container:
-55 tests, 0 failures, 0 errors, and 0 skipped. JaCoCo measured 89.32% line
-coverage (903/1,011), 58.85% branch coverage (369/627), and 90.05% instruction
-coverage (5,396/5,992) across application classes. The preceding Phase 2 run
-was 48 tests, 0 failures, 0 errors, and 0 skipped, with 89.02% line and
-58.85% branch coverage. PostgreSQL integration tests do not verify the
-running Compose API, Keycloak token validation, or Groq inference.
+Final Module 5 verification (2026-10-25) ran `mvn -B verify` with the
+standard H2 test profile: 78 tests discovered, 72 passed, 0 failed, 0 errors,
+and 6 opt-in PostgreSQL tests skipped. JaCoCo measured 89.31% line coverage
+(1,646/1,843), 60.64% branch coverage (724/1,194), and 88.95% instruction
+coverage (9,845/11,068) across application classes. The six PostgreSQL tests
+were then run separately against a fresh disposable PostgreSQL 16 database:
+6 passed, 0 failed, 0 errors, 0 skipped. These tests do not verify the
+running Compose API, live Keycloak token validation, or Groq inference.
 
 The frontend test suite is configured and runs with mocked HTTP and
 authentication dependencies; it does not call the live API, Keycloak, or
@@ -333,11 +414,11 @@ Groq. The production frontend build remains `npm run build`. For local host
 builds, the backend requires Java 21 and Maven; the frontend requires Node.js
 24 and npm.
 
-Latest frontend verification (2026-10-24): `npm ci` followed by
-`CHROME_BIN=/usr/bin/chromium npm run test:coverage` in Node.js 24 with
-headless Chromium executed 37 tests: 37 passed, 0 failed, 0 skipped. Coverage
-was 68.54% statements (329/480), 47.34% branches (89/188), 69.59% functions
-(119/171), and 70.07% lines (295/421). The HTML report is
+Final frontend verification (2026-10-25): `CHROME_BIN=/usr/bin/chromium npm
+run test:coverage` in Node.js 24 with headless Chromium executed 56 tests:
+56 passed, 0 failed, 0 skipped. Coverage was 66.26% statements (552/833),
+47.35% branches (161/340), 68.02% functions (183/269), and 68.95% lines
+(513/744). The HTML report is
 `frontend/coverage/smart-gym/index.html`. The frontend production build
 (`npm run build`) also passed. These are frontend unit/component and mocked
 authentication checks, not live browser-to-Keycloak or API end-to-end tests.
@@ -347,10 +428,16 @@ authentication checks, not live browser-to-Keycloak or API end-to-end tests.
 Reproducible k6 scripts for read-only API baseline/concurrency, expected
 unauthenticated errors, gated read-only ramp testing, and separately gated
 single-request Groq latency are in [`performance/`](./performance/README.md).
+The scripts refuse loopback targets and the known shared Compose ports
+8080/8081/8088; the operator must still verify that any other target maps to
+an isolated API, database, and identity provider.
 The only available Compose stack during setup was the running development
 stack, backed by the `smartgym` database; it was not used for load testing.
 Actual performance results remain blocked until the dedicated isolated API,
 database, and Keycloak test identity described in that guide are available.
+Final verification parsed and inspected all four k6 scripts using `k6 inspect`
+with non-production placeholder configuration. This validated their script
+configuration only; it sent no HTTP requests and is not a load benchmark.
 
 ### Module status and limitations
 
@@ -358,34 +445,38 @@ database, and Keycloak test identity described in that guide are available.
   CRUD, journal CRUD/daily totals, measurement entry/history and a saved-data
   weight chart. The body illustrations are presentation-only and do not infer
   body composition.
-- The persisted profile supports age, height, weight, target calories, goal,
-  activity level, and one dietary-preference text value. Target weight and
-  training frequency are session-only in the UI; allergies/restrictions are
-  supplied per AI request and are not persisted. Budget, cuisine, meals per
-  day, disliked foods, and preparation preferences are not supported by the
-  current API and are not collected.
-- BMI is available from valid saved height/weight. Saved-target macro
-  estimates are available from valid saved weight/calories. BMR/TDEE and
-  TDEE-derived calorie targets are unavailable because the profile has no
-  sex-related input to select the Mifflin–St Jeor variant. Required age,
-  height, and weight must also be present before that equation could be
-  evaluated.
+- The persisted profile supports target weight/date, allergies,
+  intolerances, disliked foods, preferred ingredients, budget, preparation
+  time and cooking preferences, separately from dietary style. Timeline
+  estimates are restricted to adult weight-loss goals and use an approximate
+  0.25–0.5 kg/week reference; other goals and unsupported inputs are
+  unavailable. Targets implying adult BMI below 18.5 are rejected. BMI is a
+  screening measurement, not a diagnosis; profiles with unknown age are not
+  treated as confirmed minors by the BMI endpoint.
+- Energy estimates use adult Mifflin–St Jeor inputs when available; the
+  optional equation selection, supported activity and goal are required.
+  Macro estimates use saved calories, 1.6 g/kg protein and 25% calories from
+  fat, with remaining calories allocated to carbohydrates. These are
+  estimates, not personalized medical prescriptions.
 - Journal entries store a food reference and serving quantity, not a nutrient
   snapshot. Since daily totals use the food's current nutrient values, editing
   a food can change recalculated totals for earlier journal dates.
-- A generated multi-meal suggestion is saved as separate member-owned meal
-  records. Preparation text is stored in each record description; the
-  shopping list and alternatives are not persisted.
+- Daily and seven-day plans persist as plan/day/meal/item records, linked to
+  their original generation context. Legacy individual meal-plan records
+  remain compatible. Shopping lists and alternatives are not persisted.
+- Hydration records persist drinking water separately from the food journal.
+  The 2,000 mL daily target is a general estimate and excludes food moisture.
 - No Groq API key has been configured or verified for inference. Live
   Keycloak-backed Nutrition browser/API integration and end-to-end persistence
   through the running Compose API have not been verified. The separate login
   smoke-check notes below do not verify these Module 4 workflows. Automated
   PostgreSQL tests use a disposable database and do not establish those live
   integration results.
-- Step 8 verification ran the full backend suite: 37 tests, 0 failures,
-  0 errors, and 0 skipped; backend packaging, the Angular production build,
-  Compose validation, and API/frontend image builds passed. Step 9's
-  `git diff --check` passed after removing the reported trailing blank line.
+- Groq tests use mocked HTTP responses and do not prove live inference.
+  Synthetic JWT/MockMvc tests do not prove Keycloak service integration.
+  No deployed API/browser end-to-end run or load benchmark was performed.
+  k6 scripts have explicit isolated-target and overload/live-Groq safety
+  gates; validated scripts are not performance results.
   These are prior verification results; documentation-only changes do not
   rerun those checks.
 

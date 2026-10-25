@@ -6,14 +6,17 @@ import {
   AiMealPlanResponse,
   BodyMeasurement,
   DailyNutrition,
+  HydrationDay,
   NutritionApiService,
   NutritionBmiResult,
   NutritionCalculation,
   NutritionEnergyEstimate,
+  NutritionGoalTimeline,
   NutritionFood,
   NutritionJournalEntry,
   NutritionMacroTargets,
   NutritionMealPlan,
+  NutritionPlanView,
   NutritionProfile
 } from './nutrition-api.service';
 import { NutritionComponent } from './nutrition.component';
@@ -29,7 +32,22 @@ describe('NutritionComponent', () => {
   };
   const profile: NutritionProfile = {
     id: 5, profileName: 'My profile', goal: 'maintenance', dietaryPreference: 'balanced',
-    activityLevel: 'moderate', age: 30, heightCm: 170, weightKg: 70, targetCalories: 2100
+    activityLevel: 'moderate', age: 30, heightCm: 170, weightKg: 70, targetCalories: 2100,
+    calorieTargetMode: 'MANUAL', energyEquationSex: null,
+    targetWeightKg: 65, targetDate: '2027-10-25',
+    allergies: ['peanuts'], intolerances: ['lactose'], dislikedFoods: ['olives'],
+    preferredIngredients: ['lentils'], budgetPreference: 'LOW',
+    maxPreparationMinutes: 30, cookingPreference: 'One-pan cooking'
+  };
+  const timeline: NutritionGoalTimeline = {
+    available: false, minimumWeeks: null, maximumWeeks: null,
+    earliestEstimatedDate: null, latestEstimatedDate: null, requestedDate: null,
+    requestedDateStatus: 'UNAVAILABLE', note: 'Unavailable', assumptions: 'No estimate'
+  };
+  const hydrationDay: HydrationDay = {
+    date: '2026-04-16', consumedMl: 350, targetMl: 2000,
+    logs: [{ id: 17, consumedAt: '2026-04-16T10:00:00Z', waterMl: 350 }],
+    targetAssumptions: 'General estimate; drinks only'
   };
   const daily: DailyNutrition = {
     date: '2026-04-16',
@@ -45,7 +63,8 @@ describe('NutritionComponent', () => {
   };
   const energy: NutritionEnergyEstimate = {
     available: false, bmrCaloriesPerDay: null, tdeeCaloriesPerDay: null,
-    goalCategory: null, activityFactor: null, note: 'BMR and TDEE are unavailable.'
+    goalCategory: null, activityFactor: null, goalAdjustedCalories: null,
+    note: 'BMR and TDEE are unavailable.'
   };
   const calculation: NutritionCalculation = {
     calories: 190, proteinGrams: 7, carbohydrateGrams: 32, fatGrams: 4, fiberGrams: 5, sodiumMg: 2
@@ -59,43 +78,71 @@ describe('NutritionComponent', () => {
   };
 
   function generatedPlan(): AiMealPlanResponse {
+    const meal = {
+      name: 'Oat breakfast',
+      mealType: 'BREAKFAST' as const,
+      servingSizeGrams: 350,
+      foods: [{ name: 'Oats', servings: 1, foodId: 3 }],
+      preparationInstructions: 'Cook the oats.',
+      estimatedNutrition: {
+        calories: 340, proteinGrams: 12, carbohydrateGrams: 52, fatGrams: 8, fiberGrams: 6, sodiumMg: 120
+      },
+      nutritionSource: 'REVIEW_REQUIRED' as const
+    };
+    const nutrition = {
+      calories: 340, proteinGrams: 12, carbohydrateGrams: 52, fatGrams: 8, fiberGrams: 6, sodiumMg: 120
+    };
     return {
       available: true,
       status: 'AVAILABLE',
       note: 'Review every meal before saving.',
+      generationContextId: '01234567-89ab-cdef-0123-456789abcdef',
+      planType: 'DAILY',
+      startDate: '2026-04-16',
+      days: [{ date: '2026-04-16', meals: [meal], dailyNutrition: nutrition, shoppingList: ['Oats'], alternatives: [] }],
       plan: {
         planName: 'Member plan',
         goal: 'maintenance',
-        meals: [{
-          name: 'Oat breakfast',
-          mealType: 'BREAKFAST',
-          foods: [{ name: 'Oats', servings: 1, foodId: 3 }],
-          preparationInstructions: 'Cook the oats.',
-          estimatedNutrition: { calories: 0, proteinGrams: 0, carbohydrateGrams: 0, fatGrams: 0 },
-          nutritionSource: 'REVIEW_REQUIRED'
-        }],
-        dailyNutrition: { calories: 0, proteinGrams: 0, carbohydrateGrams: 0, fatGrams: 0 },
+        meals: [meal],
+        dailyNutrition: nutrition,
         shoppingList: ['Oats'],
         alternatives: []
       }
     };
   }
 
+  const savedPlan: NutritionPlanView = {
+    id: 18, name: 'Member plan', goal: 'maintenance', planType: 'DAILY',
+    startDate: '2026-04-16', endDate: '2026-04-16', version: 0,
+    days: [{ id: 20, date: '2026-04-16', meals: [{
+      id: 21, name: 'Oat breakfast', mealType: 'BREAKFAST', servingSizeGrams: 350,
+      preparationInstructions: 'Cook the oats.', estimatedNutrition: {
+        calories: 340, proteinGrams: 12, carbohydrateGrams: 52, fatGrams: 8, fiberGrams: 6, sodiumMg: 120
+      }, nutritionSource: 'MODEL_ESTIMATE', foods: [{ foodId: 3, name: 'Oats', servings: 1 }]
+    }]}]
+  };
+
   beforeEach(async () => {
     api = jasmine.createSpyObj<NutritionApiService>('NutritionApiService', [
       'getFoods', 'createFood', 'updateFood', 'deleteFood',
-      'getMealPlans', 'createMealPlan', 'updateMealPlan', 'deleteMealPlan',
+      'getMealPlans', 'getNutritionPlans', 'getNutritionPlan', 'generatePersistentPlan',
+      'savePersistentPlan', 'regeneratePlanDay', 'replacePlanMeal',
+      'createMealPlan', 'updateMealPlan', 'deleteMealPlan',
       'getJournal', 'createJournalEntry', 'updateJournalEntry', 'deleteJournalEntry',
       'getMeasurements', 'createMeasurement', 'updateMeasurement', 'deleteMeasurement',
       'getProfile', 'saveProfile', 'calculateNutrition', 'getDailyNutrition',
-      'calculateBmi', 'calculateMacroTargets', 'calculateEnergyEstimate',
+      'calculateBmi', 'calculateMacroTargets', 'calculateEnergyEstimate', 'calculateGoalTimeline',
+      'getHydrationDay', 'getHydrationHistory', 'addHydrationLog', 'correctHydrationLog', 'deleteHydrationLog',
       'generatePlan', 'saveGeneratedPlan'
     ]);
     api.getFoods.and.returnValue(of([food]));
     api.getMealPlans.and.returnValue(of([]));
+    api.getNutritionPlans.and.returnValue(of([]));
     api.getJournal.and.returnValue(of([journalEntry]));
     api.getMeasurements.and.returnValue(of([measurement]));
     api.getProfile.and.returnValue(of(profile));
+    api.calculateGoalTimeline.and.returnValue(of(timeline));
+    api.getHydrationDay.and.returnValue(of(hydrationDay));
     api.saveProfile.and.returnValue(of(profile));
     api.createFood.and.returnValue(of(food));
     api.updateFood.and.returnValue(of(food));
@@ -116,8 +163,11 @@ describe('NutritionComponent', () => {
     api.calculateBmi.and.returnValue(of(bmi));
     api.calculateMacroTargets.and.returnValue(of(macros));
     api.calculateEnergyEstimate.and.returnValue(of(energy));
-    api.generatePlan.and.returnValue(of(generatedPlan()));
+    api.generatePersistentPlan.and.returnValue(of(generatedPlan()));
     api.saveGeneratedPlan.and.returnValue(of([]));
+    api.savePersistentPlan.and.returnValue(of(savedPlan));
+    api.regeneratePlanDay.and.returnValue(of(savedPlan));
+    api.replacePlanMeal.and.returnValue(of(savedPlan));
 
     await TestBed.configureTestingModule({
       imports: [NutritionComponent],
@@ -134,6 +184,8 @@ describe('NutritionComponent', () => {
     expect(component.foods).toEqual([food]);
     expect(component.profile?.profileName).toBe('My profile');
     expect(component.dailyNutrition).toEqual(daily);
+    expect(component.hydration).toEqual(hydrationDay);
+    expect(component.goalTimeline).toEqual(timeline);
     expect(component.bmiEstimate).toEqual(bmi);
     expect(component.macroTargets).toEqual(macros);
     expect(component.energyEstimate?.available).toBeFalse();
@@ -172,13 +224,62 @@ describe('NutritionComponent', () => {
   it('marks required profile fields and saves supported profile values', () => {
     const nameInput = fixture.nativeElement.querySelector('#profile [name="profileName"]') as HTMLInputElement;
     expect(nameInput.required).toBeTrue();
-    component.profileForm = { ...component.profileForm, profileName: 'Updated profile', targetCalories: 2200 };
+    component.profileForm = {
+      ...component.profileForm, profileName: 'Updated profile',
+      targetCalories: 2200, calorieTargetMode: 'MANUAL'
+    };
+    component.profileForm.targetWeightKg = 64;
+    component.profileForm.allergiesText = 'peanuts, sesame';
+    component.profileForm.preferredIngredientsText = 'lentils, oats';
 
     component.saveProfile();
 
-    expect(api.saveProfile).toHaveBeenCalledWith(component.profileForm);
+    expect(api.saveProfile).toHaveBeenCalledWith(jasmine.objectContaining({
+      targetWeightKg: 64, targetDate: '2027-10-25',
+      allergies: ['peanuts', 'sesame'], intolerances: ['lactose'],
+      dislikedFoods: ['olives'], preferredIngredients: ['lentils', 'oats'],
+      budgetPreference: 'LOW', maxPreparationMinutes: 30,
+      cookingPreference: 'One-pan cooking'
+    }));
     expect(component.successMessage).toBe('Your supported profile details were saved.');
     expect(component.savingProfile).toBeFalse();
+  });
+
+  it('loads persisted target and preference values and saves water logs with loading and error states', () => {
+    expect(component.profileForm.targetWeightKg).toBe(65);
+    expect(component.profileForm.targetDate).toBe('2027-10-25');
+    expect(component.profileForm.allergiesText).toBe('peanuts');
+    expect(component.hydrationProgressPercent).toBe(18);
+
+    const pending = new Subject<HydrationDay>();
+    api.addHydrationLog.and.returnValue(pending);
+    component.hydrationWaterMl = 300;
+    component.saveHydrationLog();
+    expect(component.isSavingHydration).toBeTrue();
+    expect(api.addHydrationLog).toHaveBeenCalledWith({ waterMl: 300 });
+    pending.next({ ...hydrationDay, consumedMl: 650 });
+    pending.complete();
+    expect(component.isSavingHydration).toBeFalse();
+    expect(component.hydration?.consumedMl).toBe(650);
+
+    api.addHydrationLog.and.returnValue(throwError(() => ({ error: { message: 'Invalid water amount' } })));
+    component.saveHydrationLog();
+    expect(component.hydrationError).toBe('Invalid water amount');
+    expect(component.isSavingHydration).toBeFalse();
+  });
+
+  it('corrects a saved hydration log and rejects unreasonable client input', () => {
+    api.correctHydrationLog.and.returnValue(of(hydrationDay));
+    component.editHydrationLog(hydrationDay.logs[0]);
+    component.hydrationWaterMl = 500;
+    component.saveHydrationLog();
+    expect(api.correctHydrationLog).toHaveBeenCalledWith(17, {
+      consumedAt: '2026-04-16T10:00:00Z', waterMl: 500
+    });
+    component.hydrationWaterMl = 2501;
+    component.saveHydrationLog();
+    expect(component.hydrationError).toContain('1 and 2,000');
+    expect(api.addHydrationLog).not.toHaveBeenCalled();
   });
 
   it('reports profile save errors and clears the saving state', () => {
@@ -310,28 +411,31 @@ describe('NutritionComponent', () => {
 
   it('prevents duplicate AI generation and sends trimmed explicit restrictions', () => {
     const response = new Subject<AiMealPlanResponse>();
-    api.generatePlan.and.returnValue(response);
+    api.generatePersistentPlan.and.returnValue(response);
     component.aiRestrictions = ' peanuts, , shellfish ';
 
     component.generateAiPlan();
     component.generateAiPlan();
-    expect(api.generatePlan).toHaveBeenCalledTimes(1);
-    expect(api.generatePlan).toHaveBeenCalledWith({ restrictions: ['peanuts', 'shellfish'] });
+    expect(api.generatePersistentPlan).toHaveBeenCalledTimes(1);
+    expect(api.generatePersistentPlan).toHaveBeenCalledWith(jasmine.objectContaining({
+      planType: 'DAILY', restrictions: ['peanuts', 'shellfish']
+    }));
     expect(component.isGeneratingAiPlan).toBeTrue();
     response.next(generatedPlan());
     expect(component.isGeneratingAiPlan).toBeFalse();
   });
 
   it('shows unavailable AI responses and maps service errors to safe messages', () => {
-    api.generatePlan.and.returnValue(of({
-      available: false, status: 'UNAVAILABLE', plan: null, note: 'No model is configured.'
+    api.generatePersistentPlan.and.returnValue(of({
+      available: false, status: 'UNAVAILABLE', plan: null, note: 'No model is configured.',
+      generationContextId: null
     }));
     component.generateAiPlan();
     fixture.detectChanges();
     expect(component.aiPlan?.available).toBeFalse();
     expect(fixture.nativeElement.textContent).toContain('No model is configured.');
 
-    api.generatePlan.and.returnValue(throwError(() => ({ status: 503 })));
+    api.generatePersistentPlan.and.returnValue(throwError(() => ({ status: 503 })));
     component.generateAiPlan();
     expect(component.aiError).toContain('temporarily busy or unavailable');
   });
@@ -339,73 +443,91 @@ describe('NutritionComponent', () => {
   it('does not generate without a saved profile and reflects generation errors', () => {
     component.profile = null;
     component.generateAiPlan();
-    expect(api.generatePlan).not.toHaveBeenCalled();
+    expect(api.generatePersistentPlan).not.toHaveBeenCalled();
 
     component.profile = profile;
-    api.generatePlan.and.returnValue(throwError(() => ({ status: 401 })));
+    api.generatePersistentPlan.and.returnValue(throwError(() => ({ status: 401 })));
     component.generateAiPlan();
     expect(component.aiError).toContain('session has expired');
   });
 
-  it('recalculates generated meal nutrition from saved food records and flags unmatched food', () => {
+  it('allows members to edit generated ingredients and quantities without saved food matches', () => {
     const response = generatedPlan();
-    response.plan!.meals[0].foods[0].foodId = null;
+    response.days![0].meals[0].foods[0].foodId = null;
+    response.days![0].meals[0].nutritionSource = 'MODEL_ESTIMATE';
     component.aiPlan = response;
-    component.foods = [food];
-    component.refreshAiNutrition();
-    expect(response.plan!.meals[0].nutritionSource).toBe('REVIEW_REQUIRED');
-    expect(component.hasAiNutritionReview).toBeTrue();
 
-    response.plan!.meals[0].foods[0].foodId = 3;
-    component.refreshAiNutrition();
-    expect(response.plan!.meals[0].nutritionSource).toBe('SAVED_FOOD_DATA');
-    expect(response.plan!.meals[0].estimatedNutrition).toEqual({
-      calories: 190, proteinGrams: 7, carbohydrateGrams: 32, fatGrams: 4
-    });
-    expect(response.plan!.dailyNutrition.calories).toBe(190);
+    expect(component.canSaveGeneratedPlan()).toBeTrue();
+    component.addAiIngredient(0);
+    expect(response.days![0].meals[0].foods.length).toBe(2);
+    component.removeAiIngredient(0, 1);
+    expect(response.days![0].meals[0].foods.length).toBe(1);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Save reviewed meals');
+    expect(fixture.nativeElement.textContent).toContain('assigned coach can review and edit');
   });
 
-  it('requires every generated meal to be reviewed before saving', () => {
+  it('validates recipe contents before saving generated meals', () => {
     component.aiPlan = generatedPlan();
-    expect(component.canSaveGeneratedPlan()).toBeFalse();
-    component.refreshAiNutrition();
     expect(component.canSaveGeneratedPlan()).toBeTrue();
 
-    component.aiPlan!.plan!.meals[0].foods[0].servings = 0;
+    component.aiPlan!.days![0].meals[0].foods[0].servings = 0;
     expect(component.canSaveGeneratedPlan()).toBeFalse();
     component.saveGeneratedAiPlan();
-    expect(api.saveGeneratedPlan).not.toHaveBeenCalled();
-    expect(component.aiError).toContain('Choose a saved food');
+    expect(api.savePersistentPlan).not.toHaveBeenCalled();
+    expect(component.aiError).toContain('Check each recipe');
   });
 
-  it('saves a reviewed plan once and prevents duplicate submissions while pending', () => {
-    const pending = new Subject<NutritionMealPlan[]>();
-    api.saveGeneratedPlan.and.returnValue(pending);
+  it('does not save a suggestion without its server-issued generation context', () => {
+    component.aiPlan = generatedPlan();
+    component.aiPlan.generationContextId = null;
+
+    expect(component.canSaveGeneratedPlan()).toBeFalse();
+    component.saveGeneratedAiPlan();
+
+    expect(api.savePersistentPlan).not.toHaveBeenCalled();
+  });
+
+  it('saves the reviewed plan once with its calendar day and meal contents', () => {
+    const pending = new Subject<NutritionPlanView>();
+    api.savePersistentPlan.and.returnValue(pending);
+    api.getNutritionPlans.and.returnValue(of([savedPlan]));
     component.aiRestrictions = 'peanuts';
     component.generateAiPlan();
-    component.refreshAiNutrition();
 
     component.saveGeneratedAiPlan();
     component.saveGeneratedAiPlan();
 
-    expect(api.saveGeneratedPlan).toHaveBeenCalledTimes(1);
-    expect(api.saveGeneratedPlan).toHaveBeenCalledWith({
-      planName: 'Member plan', goal: 'maintenance', restrictions: ['peanuts'],
-      meals: [{
-        name: 'Oat breakfast', mealType: 'BREAKFAST', preparationInstructions: 'Cook the oats.',
-        foods: [{ foodId: 3, servings: 1 }]
+    expect(api.savePersistentPlan).toHaveBeenCalledTimes(1);
+    expect(api.savePersistentPlan).toHaveBeenCalledWith({
+      planName: 'Member plan', goal: 'maintenance',
+      generationContextId: '01234567-89ab-cdef-0123-456789abcdef',
+      planType: 'DAILY',
+      startDate: '2026-04-16',
+      days: [{
+        date: '2026-04-16',
+        meals: [{
+          name: 'Oat breakfast', mealType: 'BREAKFAST', servingSizeGrams: 350,
+          preparationInstructions: 'Cook the oats.',
+          foods: [{ name: 'Oats', servings: 1, foodId: 3 }],
+          estimatedNutrition: {
+            calories: 340, proteinGrams: 12, carbohydrateGrams: 52,
+            fatGrams: 8, fiberGrams: 6, sodiumMg: 120
+          },
+          nutritionSource: 'REVIEW_REQUIRED'
+        }]
       }]
     });
     expect(component.isSavingGeneratedPlan).toBeTrue();
-    pending.next([]);
+    pending.next(savedPlan);
     expect(component.isSavingGeneratedPlan).toBeFalse();
     expect(component.aiPlan).toBeNull();
+    expect(component.savedNutritionPlans[0]).toEqual(savedPlan);
   });
 
-  it('maps authorization failures when saving a reviewed plan', () => {
-    api.saveGeneratedPlan.and.returnValue(throwError(() => ({ status: 403 })));
+  it('maps authorization failures when saving generated meals', () => {
+    api.savePersistentPlan.and.returnValue(throwError(() => ({ status: 403 })));
     component.aiPlan = generatedPlan();
-    component.refreshAiNutrition();
     component.saveGeneratedAiPlan();
 
     expect(component.aiError).toContain('not authorized');

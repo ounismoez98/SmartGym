@@ -10,6 +10,7 @@ import java.util.Optional;
 public interface MealPlanRepository extends JpaRepository<MealPlan, Long> {
     List<MealPlan> findBySubjectOrderByCreatedAtDesc(String subject);
     Optional<MealPlan> findByIdAndSubject(Long id, String subject);
+    List<MealPlan> findDistinctByItemsFoodId(Long foodId);
 
     @Query(value = "select count(*) from nutrition_meal_plan_items where food_id = :foodId", nativeQuery = true)
     long countItemsByFoodId(@Param("foodId") Long foodId);

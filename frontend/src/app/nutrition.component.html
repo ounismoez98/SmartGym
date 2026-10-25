@@ -1,0 +1,838 @@
+<main class="content nutrition-page">
+  <a class="back-link" routerLink="/dashboard">← Dashboard</a>
+  <header class="page-hero">
+    <div class="hero-copy">
+      <p class="eyebrow">YOUR PERSONAL NUTRITION SPACE</p>
+      <h1>A calmer way to care for your nutrition.</h1>
+      <p class="lead">Thoughtful food ideas, useful progress, and your own pace — all in one place.</p>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <svg viewBox="0 0 220 170">
+        <circle cx="110" cy="86" r="66" class="plate-outer"></circle>
+        <circle cx="110" cy="86" r="49" class="plate-inner"></circle>
+        <ellipse cx="89" cy="81" rx="21" ry="26" class="food-green"></ellipse>
+        <ellipse cx="130" cy="79" rx="18" ry="23" class="food-orange"></ellipse>
+        <circle cx="112" cy="105" r="12" class="food-red"></circle>
+        <path d="M76 108c13-14 24-13 36-3 8 7 17 8 31 1" class="food-leaf"></path>
+        <path d="M78 45c8-12 18-16 28-15m45 18c7 8 10 17 10 27" class="art-spark"></path>
+      </svg>
+    </div>
+  </header>
+
+  @if (pageError) { <p class="notice error" role="alert">{{ pageError }}</p> }
+  @if (successMessage) { <p class="notice success" role="status">{{ successMessage }}</p> }
+  @if (loading) { <p class="loading-banner" role="status">Loading your private nutrition records…</p> }
+
+  <nav class="section-nav" aria-label="Nutrition sections">
+    @for (item of navigation; track item.id) {
+      <button type="button" [class.active]="activeView === item.id"
+        [attr.aria-current]="activeView === item.id ? 'page' : null"
+        (click)="setView(item.id)">{{ item.label }}</button>
+    }
+  </nav>
+
+  @if (activeView === 'overview') {
+    <section class="overview-layout" aria-labelledby="overview-heading">
+      <article class="welcome-card">
+        <div>
+          <p class="eyebrow">A LITTLE PROGRESS, EVERY DAY</p>
+          <h2 id="overview-heading">{{ profile ? 'Welcome back to your plan' : 'Start with what works for you' }}</h2>
+          <p>{{ profile ? 'Your plan is ready when you are. Keep it flexible and make it your own.' : 'Build a personal nutrition profile, then explore meal suggestions made around your preferences.' }}</p>
+          <button class="button primary" type="button" (click)="profile ? setView('plan') : startOnboarding()">
+            {{ profile ? (mealPlans.length ? 'Continue to My Plan' : 'Create my first plan') : 'Set up my nutrition profile' }}
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+        <div class="welcome-stamp" aria-hidden="true"><span>Good</span><strong>food</strong><span>good days</span></div>
+      </article>
+
+      <div class="overview-grid">
+        <article class="surface-card daily-card">
+          <div class="card-heading">
+            <div><p class="eyebrow">YOUR JOURNAL</p><h2>Today's nutrition</h2></div>
+            <label class="date-control">Date
+              <input type="date" [(ngModel)]="dailyNutritionDate" name="overviewDate"
+                (change)="loadDailyNutrition()" />
+            </label>
+          </div>
+          @if (dailyNutritionLoading) {
+            <p role="status">Updating your daily totals…</p>
+          } @else if (dailyNutrition) {
+            <div class="nutrition-stats">
+              <div class="stat-card main-stat"><span>Energy logged</span><strong>{{ dailyNutrition.totals.calories | number:'1.0-0' }}</strong><small>kcal</small></div>
+              <div class="stat-card"><span>Protein</span><strong>{{ dailyNutrition.totals.proteinGrams | number:'1.0-0' }} g</strong></div>
+              <div class="stat-card"><span>Carbohydrates</span><strong>{{ dailyNutrition.totals.carbohydrateGrams | number:'1.0-0' }} g</strong></div>
+              <div class="stat-card"><span>Fat</span><strong>{{ dailyNutrition.totals.fatGrams | number:'1.0-0' }} g</strong></div>
+            </div>
+            @if (profile?.targetCalories != null) {
+              <div class="progress-track" role="progressbar" aria-label="Calories logged relative to saved target"
+                [attr.aria-valuenow]="calorieProgressPercent" aria-valuemin="0" aria-valuemax="100">
+                <span [style.width.%]="calorieProgressPercent"></span>
+              </div>
+              <p class="target-line">
+                {{ profile!.calorieTargetMode === 'AUTO' ? 'Estimated' : 'Saved' }} target:
+                {{ profile!.targetCalories }} kcal ·
+                @if (remainingCalories! >= 0) { {{ remainingCalories | number:'1.0-0' }} kcal remaining }
+                @else { {{ -remainingCalories! | number:'1.0-0' }} kcal over target }
+              </p>
+            } @else {
+              <p class="muted">Save a calorie target to compare it with your journal totals.</p>
+            }
+            @if (!dailyNutrition.meals.length) {
+              <p class="empty-state">Nothing logged for this day yet. Planned meals do not count as food consumed.</p>
+            } @else {
+              <div class="meal-totals">
+                @for (meal of dailyNutrition.meals; track meal.mealType) {
+                  <div><span>{{ meal.mealType.replace('_', ' ') }}</span><strong>{{ meal.totals.calories | number:'1.0-0' }} kcal</strong></div>
+                }
+              </div>
+            }
+          } @else {
+            <p class="empty-state">Daily journal totals are not available right now.</p>
+          }
+          <button class="text-link" type="button" (click)="setView('journal')">Open Food Journal <span aria-hidden="true">→</span></button>
+        </article>
+
+        <article class="surface-card profile-card">
+          <div class="card-heading">
+            <div><p class="eyebrow">YOUR FOUNDATION</p><h2>Nutrition profile</h2></div>
+            <span class="profile-avatar" aria-hidden="true">✳</span>
+          </div>
+          @if (profile) {
+            <h3>{{ profile.profileName }}</h3>
+            <p class="profile-goal">{{ profile.goal }} <span>·</span> {{ profile.dietaryPreference }}</p>
+            <dl class="profile-facts">
+              <div><dt>Current weight</dt><dd>{{ profile.weightKg ?? 'Not set' }}{{ profile.weightKg ? ' kg' : '' }}</dd></div>
+              <div><dt>Target weight</dt><dd>{{ profile.targetWeightKg ?? 'Not set' }}{{ profile.targetWeightKg ? ' kg' : '' }}</dd></div>
+              @if (profile.targetDate) { <div><dt>Desired date</dt><dd>{{ profile.targetDate }}</dd></div> }
+              <div><dt>Daily calorie target</dt><dd>{{ profile.targetCalories ?? 'Not set' }}{{ profile.targetCalories ? ' kcal' : '' }}</dd></div>
+            </dl>
+            <button class="text-link" type="button" (click)="startOnboarding()">Update my profile <span aria-hidden="true">→</span></button>
+          } @else {
+            <p class="muted">A few details help tailor suggestions and supported estimates.</p>
+            <button class="button secondary" type="button" (click)="startOnboarding()">Set up profile</button>
+          }
+        </article>
+
+        <article class="surface-card overview-progress">
+          <div class="card-heading">
+            <div><p class="eyebrow">YOUR PROGRESS</p><h2>Small steps add up</h2></div>
+            <span class="soft-icon" aria-hidden="true">↗</span>
+          </div>
+          @if (measurements.length) {
+            <p class="latest-weight"><strong>{{ measurements[0].weightKg }} kg</strong><span>Latest saved weight</span></p>
+            @if (weightChartPoints) {
+              <svg class="weight-chart compact-chart" viewBox="0 0 500 170" role="img"
+                aria-label="Weight history chart based on your saved measurements">
+                <line x1="16" y1="145" x2="484" y2="145" class="chart-axis"></line>
+                <polyline [attr.points]="weightChartPoints" class="chart-line"></polyline>
+                @for (point of weightChartDots; track $index) {
+                  <circle [attr.cx]="point.x" [attr.cy]="point.y" r="4" class="chart-dot"></circle>
+                }
+              </svg>
+              <p class="chart-caption">{{ chartStartDate }} <span>Saved measurements</span> {{ chartEndDate }}</p>
+            } @else { <p class="muted">Save another measurement to see your trend.</p> }
+          } @else {
+            <p class="empty-state">Your measurement history will appear here when you add a check-in.</p>
+          }
+          <button class="text-link" type="button" (click)="setView('progress')">View My Progress <span aria-hidden="true">→</span></button>
+        </article>
+
+        <article class="surface-card hydration-card">
+          <p class="eyebrow">HYDRATION</p>
+          <div class="hydration-illustration" aria-hidden="true">◌</div>
+          <h2>Drinking water</h2>
+          <label class="date-control">Day
+            <input type="date" [(ngModel)]="hydrationDate" name="overviewHydrationDate" (change)="loadHydration()" />
+          </label>
+          @if (isLoadingHydration) { <p role="status">Loading hydration logs…</p> }
+          @else if (hydration) {
+            <p><strong>{{ hydration.consumedMl | number }} mL</strong> of an estimated {{ hydration.targetMl | number }} mL on {{ hydration.date }}</p>
+            <div class="progress-track" role="progressbar" aria-label="Drinking water progress"
+              [attr.aria-valuenow]="hydrationProgressPercent" aria-valuemin="0" aria-valuemax="100">
+              <span [style.width.%]="hydrationProgressPercent"></span>
+            </div>
+            <p class="small-note">{{ hydration.targetAssumptions }}</p>
+            <form class="hydration-form" (ngSubmit)="saveHydrationLog()">
+              <label>Water consumed <span class="unit">mL</span>
+                <input type="number" min="1" max="2000" step="1" [(ngModel)]="hydrationWaterMl" name="overviewHydrationAmount" required />
+              </label>
+              <button class="button primary" type="submit" [disabled]="isSavingHydration">
+                {{ isSavingHydration ? 'Saving…' : editingHydrationLogId ? 'Correct log' : 'Add water' }}
+              </button>
+              @if (editingHydrationLogId !== null) {
+                <button class="button secondary" type="button" (click)="cancelHydrationEdit()">Cancel</button>
+              }
+            </form>
+            @if (hydration.logs.length) {
+              <ul class="hydration-logs">@for (log of hydration.logs; track log.id) {
+                <li><span>{{ log.consumedAt | date:'shortTime' }} · {{ log.waterMl }} mL</span>
+                  <span class="actions">
+                    <button class="text-link" type="button" (click)="editHydrationLog(log)">Correct</button>
+                    <button class="text-link" type="button" (click)="deleteHydrationLog(log)">Remove</button>
+                  </span>
+                </li>
+              }</ul>
+            } @else { <p class="empty-state">No water logs for this date yet.</p> }
+          }
+          @if (hydrationError) { <p class="notice error" role="alert">{{ hydrationError }}</p> }
+        </article>
+
+        <article class="surface-card recent-card">
+          <div class="card-heading">
+            <div><p class="eyebrow">RECENT JOURNAL</p><h2>What you've logged</h2></div>
+            <button class="text-link" type="button" (click)="setView('journal')">View journal →</button>
+          </div>
+          @if (recentJournalEntries.length) {
+            <div class="recent-list">
+              @for (entry of recentJournalEntries; track entry.id) {
+                <div class="recent-row">
+                  <span class="meal-dot" aria-hidden="true"></span>
+                  <div><strong>{{ foodName(entry.foodId) }}</strong><small>{{ entry.entryDate }} · {{ entry.mealType.replace('_', ' ') }}</small></div>
+                  <span>{{ entry.servings }} serving{{ entry.servings === 1 ? '' : 's' }}</span>
+                </div>
+              }
+            </div>
+          } @else { <p class="empty-state">Your logged meals will appear here. Planned meals stay separate.</p> }
+        </article>
+      </div>
+    </section>
+  }
+
+  @if (activeView === 'onboarding') {
+    <section id="profile" class="wizard-shell" aria-labelledby="wizard-heading">
+      <div class="wizard-heading">
+        <p class="eyebrow">YOUR NUTRITION STARTING POINT</p>
+        <h2 id="wizard-heading">{{ wizardTitle }}</h2>
+        <p class="muted">A few gentle steps to make your nutrition space your own.</p>
+      </div>
+      <ol class="wizard-progress" aria-label="Onboarding progress">
+        @for (step of wizardSteps; track step.number) {
+          <li [class.current]="wizardStep === step.number" [class.complete]="wizardStep > step.number">
+            <span>{{ wizardStep > step.number ? '✓' : step.number }}</span><small>{{ step.label }}</small>
+          </li>
+        }
+      </ol>
+
+      <div class="surface-card wizard-card">
+        @if (wizardError) { <p class="notice error" role="alert">{{ wizardError }}</p> }
+        @if (wizardStep === 1) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 1 OF 6</span><h3>Welcome. Let's make this feel like yours.</h3>
+              <p>Choose the illustration you prefer. This is a visual choice only and does not affect health calculations or calorie estimates.</p>
+            </div>
+            <fieldset class="presentation-choice">
+              <legend class="visually-hidden">Choose an illustration style</legend>
+              <button type="button" class="presentation-card" [class.selected]="bodyPresentation === 'female'"
+                [attr.aria-pressed]="bodyPresentation === 'female'" (click)="bodyPresentation = 'female'">
+                <svg viewBox="0 0 80 100" aria-hidden="true"><circle cx="40" cy="16" r="12"></circle><path d="M30 33 Q40 28 50 33 L55 52 51 58 60 70 51 75 47 93 41 93 40 78 39 93 33 93 29 75 20 70 29 58 25 52Z"></path><path d="M28 48 L19 66 M52 48 L61 66" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"></path></svg>
+                <span>Female illustration</span>
+              </button>
+              <button type="button" class="presentation-card" [class.selected]="bodyPresentation === 'male'"
+                [attr.aria-pressed]="bodyPresentation === 'male'" (click)="bodyPresentation = 'male'">
+                <svg viewBox="0 0 80 100" aria-hidden="true"><circle cx="40" cy="16" r="12"></circle><path d="M24 33 Q40 27 56 33 L63 56 55 61 57 93 44 93 40 64 36 93 23 93 25 61 17 56Z"></path><path d="M25 44 L16 65 M55 44 L64 65" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"></path></svg>
+                <span>Male illustration</span>
+              </button>
+            </fieldset>
+          </div>
+        }
+        @if (wizardStep === 2) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 2 OF 6</span><h3>Your starting point</h3>
+              <p>These details support the estimates available from your nutrition profile. Activity is used only where the backend supports an energy estimate. To calculate BMI now, a new profile is first saved with maintenance and balanced defaults; your goal and food preference are saved again with your choices in later steps.</p>
+            </div>
+            <div class="form-grid">
+              <label>Age <span class="unit">years</span><input type="number" min="1" max="120" [(ngModel)]="profileForm.age" name="age" required /></label>
+              <label>Height <span class="unit">cm</span><input type="number" min="1" step="0.1" [(ngModel)]="profileForm.heightCm" name="heightCm" required /></label>
+              <label>Current weight <span class="unit">kg</span><input type="number" min="1" step="0.1" [(ngModel)]="profileForm.weightKg" name="weightKg" required /></label>
+              <label>Activity level
+                <select [(ngModel)]="profileForm.activityLevel" name="activityLevel" required>
+                  <option value="">Choose an activity level</option>
+                  @for (level of activityLevels; track level) { <option [value]="level">{{ level }}</option> }
+                </select>
+              </label>
+            </div>
+          </div>
+        }
+        @if (wizardStep === 3) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 3 OF 6</span><h3>Your saved-profile estimates</h3>
+              <p>BMI is provided by the nutrition service from your saved height and weight. It is a screening estimate, not a diagnosis or a measure of body composition.</p>
+            </div>
+            @if (bmiEstimate) {
+              <div class="bmi-result"><span>Backend-calculated BMI</span><strong>{{ bmiEstimate.bmi | number:'1.1-1' }}</strong><p>{{ bmiEstimate.note }}</p></div>
+            } @else {
+              <p class="empty-state">{{ calculationErrors.bmi || 'BMI is unavailable until the profile values are saved.' }}</p>
+            }
+            <div class="info-panel">
+              <strong>About target weight and timing</strong>
+              @if (goalTimeline?.available) {
+                <p>Approximate backend range: {{ goalTimeline!.minimumWeeks }}–{{ goalTimeline!.maximumWeeks }} weeks
+                  ({{ goalTimeline!.earliestEstimatedDate | date:'mediumDate' }}–{{ goalTimeline!.latestEstimatedDate | date:'mediumDate' }}).</p>
+                <p>{{ goalTimeline!.note }}</p><small>{{ goalTimeline!.assumptions }}</small>
+              } @else {
+                <p>{{ goalTimeline?.note || goalTimelineError || 'A suitable estimate is not available until a supported goal and saved target are available.' }}</p>
+              }
+            </div>
+          </div>
+        }
+        @if (wizardStep === 4) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 4 OF 6</span><h3>What would you like to focus on?</h3>
+              <p>Choose a goal saved to your nutrition profile. It helps shape the meal suggestions, but is not medical advice.</p>
+            </div>
+            <fieldset class="choice-grid">
+              <legend>Choose your goal</legend>
+              @for (goal of fitnessGoals; track goal) {
+                <label class="choice-card" [class.selected]="profileForm.goal === goal">
+                  <input type="radio" name="goal" [value]="goal" [(ngModel)]="profileForm.goal" />
+                  <span>{{ goal }}</span>
+                </label>
+              }
+            </fieldset>
+            <div class="form-grid">
+              <label>Target weight <span class="unit">kg · optional</span>
+                <input type="number" min="1" max="500" step="0.1" [(ngModel)]="profileForm.targetWeightKg" name="targetWeight" />
+              </label>
+              <label>Desired target date <span class="unit">optional</span>
+                <input type="date" [(ngModel)]="profileForm.targetDate" name="targetDate" />
+              </label>
+            </div>
+            <div class="info-panel"><strong>About your target</strong>
+              <p>Your target and optional date are saved with your profile. The date is a personal goal, not a medically guaranteed completion date. Adult BMI is used only as a screening check and is not a diagnosis. Target-weight estimates are not provided for minors.</p>
+            </div>
+            @if (goalTimeline) { <p class="small-note">{{ goalTimeline.note }} {{ goalTimeline.assumptions }}</p> }
+            @if (goalTimelineError) { <p class="notice error" role="alert">{{ goalTimelineError }}</p> }
+            <div class="calorie-choice">
+              <label>Daily calorie target
+                <select [(ngModel)]="profileForm.calorieTargetMode" name="calorieTargetMode">
+                  <option value="AUTO">Use the available backend estimate</option>
+                  <option value="MANUAL">I want to set a target manually</option>
+                </select>
+              </label>
+              @if (profileForm.calorieTargetMode === 'MANUAL') {
+                <label>Target <span class="unit">kcal/day</span><input type="number" min="1" [(ngModel)]="profileForm.targetCalories" name="targetCalories" required /></label>
+              } @else {
+                <label>Energy equation input <span class="unit">optional, not the illustration choice</span>
+                  <select [(ngModel)]="profileForm.energyEquationSex" name="energyEquationSex">
+                    <option [ngValue]="null">Not selected</option><option value="FEMALE">Female equation</option><option value="MALE">Male equation</option>
+                  </select>
+                </label>
+              }
+            </div>
+            @if (!profile?.targetCalories && profileForm.calorieTargetMode === 'AUTO' && !profileForm.energyEquationSex) {
+              <p class="small-note">A calorie estimate is unavailable without a separate equation input. Add that input or choose a manual target to generate meal suggestions.</p>
+            }
+            @if (profileError) { <p class="notice error" role="alert">{{ profileError }}</p> }
+          </div>
+        }
+        @if (wizardStep === 5) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 5 OF 6</span><h3>Food that fits your preferences</h3>
+              <p>Allergies, intolerances, dislikes and cooking preferences are stored separately. Saved restrictions are rechecked by the backend; suggestions cannot guarantee allergy safety.</p>
+            </div>
+            <div class="form-grid">
+              <label>Dietary preference
+                <select [(ngModel)]="profileForm.dietaryPreference" name="dietaryPreference" required>
+                  <option value="">Choose a preference</option><option value="balanced">Balanced</option>
+                  <option value="vegetarian">Vegetarian</option><option value="vegan">Vegan</option>
+                  <option value="pescatarian">Pescatarian</option><option value="other">Other</option>
+                </select>
+              </label>
+              <label>Allergies <span class="unit">comma-separated</span>
+                <input [(ngModel)]="profileForm.allergiesText" name="allergies" maxlength="500" placeholder="For example: peanuts, shellfish" />
+              </label>
+              <label>Intolerances <span class="unit">comma-separated</span>
+                <input [(ngModel)]="profileForm.intolerancesText" name="intolerances" maxlength="500" placeholder="For example: lactose" />
+              </label>
+              <label>Foods you dislike <span class="unit">comma-separated</span>
+                <input [(ngModel)]="profileForm.dislikedFoodsText" name="dislikedFoods" maxlength="500" />
+              </label>
+              <label>Preferred or available ingredients <span class="unit">comma-separated</span>
+                <input [(ngModel)]="profileForm.preferredIngredientsText" name="preferredIngredients" maxlength="500" />
+              </label>
+              <label>Budget
+                <select [(ngModel)]="profileForm.budgetPreference" name="budgetPreference">
+                  <option [ngValue]="null">Not set</option><option value="LOW">Budget-conscious</option>
+                  <option value="MODERATE">Moderate</option><option value="FLEXIBLE">Flexible</option>
+                </select>
+              </label>
+              <label>Maximum preparation time <span class="unit">minutes · optional</span>
+                <input type="number" min="5" max="240" step="5" [(ngModel)]="profileForm.maxPreparationMinutes" name="maxPreparationMinutes" />
+              </label>
+              <label class="full-width">Other cooking preferences
+                <textarea [(ngModel)]="profileForm.cookingPreference" name="cookingPreference" rows="2" maxlength="500"
+                  placeholder="Equipment, cuisines, cooking methods…"></textarea>
+              </label>
+            </div>
+            @if (profileError) { <p class="notice error" role="alert">{{ profileError }}</p> }
+          </div>
+        }
+        @if (wizardStep === 6) {
+          <div class="wizard-step">
+            <div class="step-copy"><span class="step-kicker">STEP 6 OF 6</span><h3>Ready for some ideas?</h3>
+              <p>Choose a daily or seven-day plan. Review its recipes, portions, instructions, and estimates before saving.</p>
+            </div>
+            <div class="plan-choice-row">
+              <button class="plan-choice" [class.selected]="selectedPlanType === 'DAILY'" type="button"
+                [attr.aria-pressed]="selectedPlanType === 'DAILY'" (click)="selectedPlanType = 'DAILY'">
+                <span class="choice-mark">1</span><h4>Daily plan</h4><p>Suggestions for one calendar day.</p>
+              </button>
+              <button class="plan-choice" [class.selected]="selectedPlanType === 'WEEKLY'" type="button"
+                [attr.aria-pressed]="selectedPlanType === 'WEEKLY'" (click)="selectedPlanType = 'WEEKLY'">
+                <span class="choice-mark">7</span><h4>Seven-day plan</h4><p>Seven dated days, generated and saved together.</p>
+              </button>
+            </div>
+            @if (isGeneratingAiPlan) { <p class="loading-banner" role="status">Preparing meal suggestions from your saved profile…</p> }
+            @if (aiError) { <p class="notice error" role="alert">{{ aiError }}</p> }
+            @if (aiPlan && !aiPlan.available) { <p class="notice error" role="alert">{{ aiPlan.note }}</p> }
+            @if (aiPlan?.available && aiPlan?.plan) {
+              <p class="notice success" role="status">Suggestions are ready for review in My Plan. They have not been saved yet.</p>
+              <button class="button primary" type="button" (click)="setView('plan')">Review suggestions</button>
+            } @else {
+              <button class="button primary" type="button" (click)="generateAiPlan()"
+                [disabled]="isGeneratingAiPlan || isSavingGeneratedPlan || !profile">
+                {{ isGeneratingAiPlan ? 'Generating…' : 'Generate ' + (selectedPlanType === 'WEEKLY' ? 'seven-day' : 'daily') + ' plan' }}
+              </button>
+            }
+            <p class="small-note">Nutrition values are estimates, not exact measurements or guarantees of suitability. Restrictions are revalidated when you save.</p>
+          </div>
+        }
+        <div class="wizard-actions">
+          <button class="button secondary" type="button" (click)="previousOnboardingStep()" [disabled]="wizardStep === 1 || savingProfile">Back</button>
+          @if (wizardStep < 6) {
+            <button class="button primary" type="button" (click)="nextOnboardingStep()" [disabled]="savingProfile">
+              {{ savingProfile && wizardStep === 2 ? 'Saving profile…' : 'Continue' }} <span aria-hidden="true">→</span>
+            </button>
+          } @else {
+            <button class="button secondary" type="button" (click)="setView('plan')">Open My Plan</button>
+          }
+        </div>
+      </div>
+    </section>
+  }
+
+  @if (activeView === 'plan') {
+    <section id="plans" class="page-section" aria-labelledby="plan-heading">
+      <header class="view-heading">
+        <div><p class="eyebrow">PLAN &amp; PREPARE</p><h2 id="plan-heading">My Plan</h2>
+          <p class="muted">Meal ideas are separate from your Food Journal. Only foods you log count toward today's intake.</p></div>
+      </header>
+      <div class="surface-card generation-controls">
+        <label>Plan type
+          <select [(ngModel)]="selectedPlanType" name="planType">
+            <option value="DAILY">Daily plan</option><option value="WEEKLY">Seven-day plan</option>
+          </select>
+        </label>
+        <label>Start date
+          <input type="date" [(ngModel)]="dailyNutritionDate" name="planStartDate" />
+        </label>
+        <label>Allergies or ingredients to exclude
+          <input [(ngModel)]="aiRestrictions" (ngModelChange)="onAiRestrictionsChanged()" name="planRestrictions" maxlength="500" placeholder="For example: peanuts, shellfish" />
+        </label>
+        <p class="small-note">Restrictions are saved with this plan and checked on later edits. Pork and pork-derived ingredients are excluded by default. AI suggestions cannot guarantee allergy safety.</p>
+        <button class="button primary" type="button" (click)="generateAiPlan()"
+          [disabled]="!profile?.targetCalories || isGeneratingAiPlan || isSavingGeneratedPlan">
+          {{ isGeneratingAiPlan ? 'Generating…' : 'Generate ' + (selectedPlanType === 'WEEKLY' ? 'seven-day plan' : 'daily plan') }}
+        </button>
+        @if (!profile?.targetCalories) { <p class="small-note">Set a supported calorie target in Profile setup before generating.</p> }
+      </div>
+      @if (aiError) { <p class="notice error" role="alert">{{ aiError }}</p> }
+      @if (isGeneratingAiPlan) { <p class="loading-banner" role="status">Preparing suggestions from your saved profile and restrictions…</p> }
+      @if (aiPlan) {
+        <section class="suggestion-panel surface-card" aria-labelledby="suggestions-heading">
+          <div class="card-heading"><div><p class="eyebrow">READY FOR YOUR REVIEW</p><h3 id="suggestions-heading">{{ aiPlan.plan?.planName || 'Meal suggestions' }}</h3></div>
+            @if (aiPlan.available && aiPlan.plan) { <span class="availability-pill">Not saved yet</span> }
+          </div>
+          <p class="muted" role="status">{{ aiPlan.note }}</p>
+          @if (aiPlan.available && aiPlan.plan; as plan) {
+            <nav class="day-selector" aria-label="Draft plan days">
+              @for (day of aiPlan.days ?? []; track day.date; let dayIndex = $index) {
+                <button class="day-choice" type="button" [class.selected]="selectedDraftDayIndex === dayIndex"
+                  [attr.aria-pressed]="selectedDraftDayIndex === dayIndex" (click)="selectedDraftDayIndex = dayIndex">
+                  Day {{ dayIndex + 1 }} · {{ day.date }}
+                </button>
+              }
+            </nav>
+            @if (aiPlan.days?.[selectedDraftDayIndex]; as draftDay) {
+            <section class="draft-day">
+              <h4>{{ draftDay.date }}</h4>
+              <div class="nutrition-stats compact-stats">
+                <div class="stat-card main-stat"><span>Estimated daily calories</span><strong>{{ draftDay.dailyNutrition.calories | number:'1.0-0' }} kcal</strong></div>
+                <div class="stat-card"><span>Protein</span><strong>{{ draftDay.dailyNutrition.proteinGrams | number:'1.0-1' }} g</strong></div>
+                <div class="stat-card"><span>Carbs</span><strong>{{ draftDay.dailyNutrition.carbohydrateGrams | number:'1.0-1' }} g</strong></div>
+                <div class="stat-card"><span>Fat</span><strong>{{ draftDay.dailyNutrition.fatGrams | number:'1.0-1' }} g</strong></div>
+              </div>
+              <div class="meal-card-grid">
+              @for (meal of draftDay.meals; track $index; let mealIndex = $index) {
+                <article class="meal-card">
+                  <div class="meal-art" role="img" aria-label="Illustrated meal placeholder; food photography is not available">
+                    <svg viewBox="0 0 120 100" aria-hidden="true">
+                      <circle cx="60" cy="51" r="37" class="plate-outer"></circle><circle cx="60" cy="51" r="27" class="plate-inner"></circle>
+                      <ellipse cx="48" cy="47" rx="11" ry="15" class="food-green"></ellipse><ellipse cx="70" cy="46" rx="10" ry="13" class="food-orange"></ellipse>
+                      <circle cx="60" cy="63" r="7" class="food-red"></circle>
+                    </svg>
+                  </div>
+                  <div class="meal-card-content">
+                    <div class="meal-card-title"><span class="pill">{{ meal.mealType.replace('_', ' ') }}</span>
+                      <span class="nutrition-source">{{ meal.nutritionSource.replace('_', ' ').toLowerCase() }}</span></div>
+                    <label>Meal name<input [(ngModel)]="meal.name" [name]="'suggestedName' + mealIndex" maxlength="120" /></label>
+                    <p class="serving-caption">Serving size · {{ meal.servingSizeGrams }} g</p>
+                    <h4>Ingredients &amp; portions</h4>
+                    @for (item of meal.foods; track $index; let ingredientIndex = $index) {
+                      <div class="food-picker">
+                        <label>Ingredient<input [(ngModel)]="item.name" [name]="'ingredient' + mealIndex + '-' + ingredientIndex" maxlength="150" /></label>
+                        <label>Servings<input type="number" min="0.01" step="0.1" [(ngModel)]="item.servings" [name]="'servings' + mealIndex + '-' + ingredientIndex" /></label>
+                        <button class="icon-button" type="button" (click)="removeAiIngredient(mealIndex, ingredientIndex)"
+                          [disabled]="meal.foods.length === 1" [attr.aria-label]="'Remove ' + item.name">×</button>
+                      </div>
+                    }
+                    <button class="text-link" type="button" (click)="addAiIngredient(mealIndex)">+ Add ingredient</button>
+                    <label class="instructions-field">Preparation instructions
+                      <textarea [(ngModel)]="meal.preparationInstructions" [name]="'preparation' + mealIndex" maxlength="350" rows="3"></textarea>
+                    </label>
+                    <p class="meal-estimate">Model estimate per serving <strong>{{ meal.estimatedNutrition.calories | number:'1.0-0' }} kcal</strong>
+                      · P {{ meal.estimatedNutrition.proteinGrams | number:'1.0-0' }} g · C {{ meal.estimatedNutrition.carbohydrateGrams | number:'1.0-0' }} g · F {{ meal.estimatedNutrition.fatGrams | number:'1.0-0' }} g</p>
+                    <p class="small-note">Editing ingredients or portions here does not recalculate this estimate.</p>
+                  </div>
+                </article>
+              }
+              </div>
+            </section>
+            }
+            @if (plan.shoppingList.length || plan.alternatives.length) {
+              <details class="optional-details"><summary>Shopping list and alternatives (not saved)</summary>
+                @if (plan.shoppingList.length) { <h4>Shopping list</h4><ul>@for (item of plan.shoppingList; track $index) { <li>{{ item }}</li> }</ul> }
+                @if (plan.alternatives.length) { <h4>Alternatives</h4><ul>@for (item of plan.alternatives; track $index) { <li>{{ item }}</li> }</ul> }
+              </details>
+            }
+            <div class="form-actions">
+              <button class="button primary" type="button" (click)="saveGeneratedAiPlan()" [disabled]="!canSaveGeneratedPlan()">
+                {{ isSavingGeneratedPlan ? 'Saving…' : 'Save complete ' + (aiPlan.planType === 'WEEKLY' ? 'weekly plan' : 'daily plan') }}</button>
+              <button class="button secondary" type="button" (click)="generateAiPlan()" [disabled]="isGeneratingAiPlan || isSavingGeneratedPlan">Generate another set</button>
+            </div>
+            <p class="small-note">Estimates can be incomplete or inaccurate. Verify ingredients and labels; AI suggestions cannot guarantee allergy safety. Shopping lists and alternatives are not persisted.</p>
+          }
+        </section>
+      }
+      @if (!mealPlans.length && !savedNutritionPlans.length && !aiPlan && !loading) {
+        <div class="surface-card empty-plan">
+          <div class="empty-plate" aria-hidden="true">✳</div><h3>Your plan starts here</h3>
+          <p>No meals saved yet. Generate a set of suggestions, review them, and save the meals you want to keep.</p>
+          <button class="button primary" type="button" (click)="generateAiPlan()" [disabled]="!profile?.targetCalories || isGeneratingAiPlan">Generate meal suggestions</button>
+          @if (!profile?.targetCalories) { <button class="text-link" type="button" (click)="startOnboarding()">Set up a calorie target first →</button> }
+        </div>
+      }
+      <section class="saved-plans">
+        <div class="section-title"><div><p class="eyebrow">SAVED PLANS</p><h3>Your daily and weekly plans</h3></div></div>
+        @if (planActionError) { <p class="notice error" role="alert">{{ planActionError }}</p> }
+        @if (!savedNutritionPlans.length && !loading) {
+          <p class="empty-state">No saved daily or weekly plans yet. Generate a plan and save it after review.</p>
+        }
+        @for (savedPlan of savedNutritionPlans; track savedPlan.id) {
+          <article class="surface-card saved-plan-card">
+            <header class="card-heading">
+              <div><span class="pill">{{ savedPlan.planType === 'WEEKLY' ? 'Seven-day plan' : 'Daily plan' }}</span>
+                <h3>{{ savedPlan.name }}</h3><p>{{ savedPlan.startDate }} — {{ savedPlan.endDate }} · {{ savedPlan.goal }}</p>
+              </div>
+            </header>
+            @for (day of savedPlan.days; track day.date; let dayIndex = $index) {
+              <section class="saved-plan-day">
+                <div class="section-title"><h4>Day {{ dayIndex + 1 }} · {{ day.date }}</h4>
+                  @if (savedPlan.planType === 'WEEKLY') {
+                    <button class="button secondary small" type="button"
+                      [disabled]="updatingPlanId != null"
+                      (click)="regenerateSavedDay(savedPlan, day.date)">
+                      {{ updatingPlanId === savedPlan.id ? 'Updating…' : 'Regenerate this day' }}
+                    </button>
+                  }
+                </div>
+                <div class="saved-meal-list">
+                  @for (meal of day.meals; track meal.id) {
+                    <article class="saved-meal">
+                      <div><span class="pill">{{ meal.mealType.replace('_', ' ') }}</span>
+                        <h5>{{ meal.name }}</h5>
+                        <p>{{ meal.servingSizeGrams }} g · {{ meal.estimatedNutrition.calories | number:'1.0-0' }} estimated kcal</p>
+                        <ul class="compact-list">@for (food of meal.foods; track $index) {
+                          <li>{{ food.name }} · {{ food.servings }} servings</li>
+                        }</ul>
+                        <p>{{ meal.preparationInstructions }}</p>
+                      </div>
+                      <button class="button quiet small" type="button" [disabled]="updatingPlanId != null"
+                        (click)="replaceSavedMeal(savedPlan, meal.id)">
+                        {{ updatingPlanId === savedPlan.id ? 'Updating…' : 'Replace meal' }}
+                      </button>
+                    </article>
+                  }
+                </div>
+              </section>
+            }
+          </article>
+        }
+      </section>
+      @if (mealPlans.length) {
+        <div class="saved-plan-heading"><div><p class="eyebrow">SAVED MEALS</p><h3>Your saved plan library</h3></div>
+          <span class="availability-pill">{{ mealPlans.length }} saved {{ mealPlans.length === 1 ? 'meal' : 'meals' }}</span></div>
+        <div class="meal-card-grid saved-meals">
+          @for (plan of mealPlans; track plan.id) {
+            <article class="meal-card saved-meal-card">
+              <div class="meal-art" role="img" aria-label="Illustrated meal placeholder; food photography is not available">
+                <svg viewBox="0 0 120 100" aria-hidden="true">
+                  <circle cx="60" cy="51" r="37" class="plate-outer"></circle><circle cx="60" cy="51" r="27" class="plate-inner"></circle>
+                  <ellipse cx="48" cy="47" rx="11" ry="15" class="food-green"></ellipse><ellipse cx="70" cy="46" rx="10" ry="13" class="food-orange"></ellipse>
+                  <circle cx="60" cy="63" r="7" class="food-red"></circle>
+                </svg>
+              </div>
+              <div class="meal-card-content">
+                <div class="meal-card-title"><span class="pill">{{ plan.mealType.replace('_', ' ') }}</span>
+                  @if (planNutritionAvailable(plan)) {
+                    <strong>{{ planNutrition(plan).calories | number:'1.0-0' }} kcal <small>estimated</small></strong>
+                  } @else { <span class="nutrition-source">Estimate unavailable</span> }
+                </div>
+                <h3>{{ plan.name }}</h3>
+                @if (plan.description) { <p class="meal-description">{{ plan.description }}</p> }
+                <ul class="ingredient-list">@for (item of plan.foods; track $index) {
+                  <li>{{ item.foodName }} <span>{{ item.servings }} serving{{ item.servings === 1 ? '' : 's' }}</span></li>
+                }</ul>
+                @if (planNutritionAvailable(plan)) {
+                  <div class="macro-summary">Protein {{ planNutrition(plan).proteinGrams | number:'1.0-0' }} g · Carbs {{ planNutrition(plan).carbohydrateGrams | number:'1.0-0' }} g · Fat {{ planNutrition(plan).fatGrams | number:'1.0-0' }} g</div>
+                }
+                <div class="actions">
+                  <button class="button secondary small" type="button" (click)="editMealPlan(plan)">Edit meal</button>
+                  <button class="button danger small" type="button" (click)="deleteMealPlan(plan)">Remove</button>
+                </div>
+              </div>
+            </article>
+          }
+        </div>
+      }
+      <details class="surface-card management-disclosure">
+        <summary>{{ editingMealPlanId ? 'Edit saved meal' : 'Create or edit a meal using your food library' }}</summary>
+        <p class="muted">This manual meal editor uses foods already saved in your private library.</p>
+        <form class="form-grid" (ngSubmit)="saveMealPlan()">
+          <label>Meal name<input [(ngModel)]="mealPlanForm.name" name="planName" required maxlength="120" /></label>
+          <label>Meal type<select [(ngModel)]="mealPlanForm.mealType" name="planMealType" required>
+            @for (type of mealTypes; track type) { <option [ngValue]="type">{{ type.replace('_', ' ') }}</option> }
+          </select></label>
+          <label>Calories target<input type="number" min="0" [(ngModel)]="mealPlanForm.targetCalories" name="planCalories" required /></label>
+          <label>Description / preparation<input [(ngModel)]="mealPlanForm.description" name="planDescription" maxlength="500" /></label>
+          @for (item of mealPlanItems; track $index) {
+            <div class="food-picker">
+              <label>Saved food<select [(ngModel)]="item.foodId" [name]="'planFood' + $index" required>
+                <option [ngValue]="0">Choose food</option>@for (food of foods; track food.id) { <option [ngValue]="food.id">{{ food.name }} · {{ food.calories }} kcal</option> }
+              </select></label>
+              <label>Servings<input type="number" min="0.01" step="0.1" [(ngModel)]="item.servings" [name]="'planServings' + $index" required /></label>
+              @if (mealPlanItems.length > 1) { <button class="icon-button" type="button" (click)="removePlanFood($index)" aria-label="Remove food">×</button> }
+            </div>
+          }
+          <div class="form-actions"><button class="button secondary" type="button" (click)="addPlanFood()">Add another food</button>
+            <button class="button primary" type="submit">{{ editingMealPlanId ? 'Update meal' : 'Save meal' }}</button>
+            @if (editingMealPlanId) { <button class="button secondary" type="button" (click)="cancelMealPlanEdit()">Cancel</button> }
+          </div>
+        </form>
+        @if (mealPlanError) { <p class="notice error" role="alert">{{ mealPlanError }}</p> }
+      </details>
+    </section>
+  }
+
+  @if (activeView === 'progress') {
+    <section id="progress" class="page-section" aria-labelledby="progress-heading">
+      <header class="view-heading"><div><p class="eyebrow">YOUR HISTORY</p><h2 id="progress-heading">My Progress</h2>
+        <p class="muted">Your measurements and food history, based only on data you have saved.</p></div></header>
+      <div class="progress-grid">
+        <article class="surface-card">
+          <div class="card-heading"><div><p class="eyebrow">BODY MEASUREMENTS</p><h3>Weight history</h3></div>
+            @if (measurements.length) { <strong class="large-value">{{ measurements[0].weightKg }} kg</strong> }</div>
+          @if (measurements.length > 1) {
+            <svg class="weight-chart" viewBox="0 0 500 170" role="img" aria-label="Weight trend from saved body measurements">
+              <line x1="16" y1="145" x2="484" y2="145" class="chart-axis"></line>
+              <polyline [attr.points]="weightChartPoints" class="chart-line"></polyline>
+              @for (point of weightChartDots; track $index) { <circle [attr.cx]="point.x" [attr.cy]="point.y" r="4" class="chart-dot"></circle> }
+            </svg>
+            <p class="chart-caption">{{ chartStartDate }} <span>Weight in kg · saved measurements</span> {{ chartEndDate }}</p>
+          } @else if (measurements.length === 1) { <p class="empty-state">One check-in saved. Add another to see your weight trend.</p> }
+          @else { <p class="empty-state">No measurements saved yet.</p> }
+          @if (measurementError) { <p class="notice error" role="alert">{{ measurementError }}</p> }
+          <form class="form-grid" (ngSubmit)="saveMeasurement()">
+            <label>Measurement date<input type="date" [(ngModel)]="measurementForm.measurementDate" name="measurementDate" required /></label>
+            <label>Weight <span class="unit">kg</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.weightKg" name="measurementWeight" required /></label>
+            <label>Waist <span class="unit">cm</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.waistCm" name="measurementWaist" required /></label>
+            <label>Hip <span class="unit">cm</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.hipCm" name="measurementHip" required /></label>
+            <label>Chest <span class="unit">cm</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.chestCm" name="measurementChest" required /></label>
+            <label>Arm <span class="unit">cm</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.armCm" name="measurementArm" required /></label>
+            <label>Thigh <span class="unit">cm</span><input type="number" min="0.1" step="0.1" [(ngModel)]="measurementForm.thighCm" name="measurementThigh" required /></label>
+            <label class="full-width">Notes<input [(ngModel)]="measurementForm.notes" name="measurementNotes" maxlength="300" /></label>
+            <div class="form-actions"><button class="button primary" type="submit">{{ editingMeasurementId ? 'Update check-in' : 'Save check-in' }}</button>
+              @if (editingMeasurementId) { <button class="button secondary" type="button" (click)="cancelMeasurementEdit()">Cancel</button> }</div>
+          </form>
+          @if (measurements.length) {
+            <div class="measurement-list">@for (measurement of measurements; track measurement.id) {
+              <div class="measurement-row"><div><strong>{{ measurement.measurementDate }}</strong><span>{{ measurement.weightKg }} kg · waist {{ measurement.waistCm }} cm</span></div>
+                <div class="actions"><button class="button secondary small" type="button" (click)="editMeasurement(measurement)">Edit</button>
+                  <button class="button danger small" type="button" (click)="deleteMeasurement(measurement)">Remove</button></div></div>
+            }</div>
+          }
+        </article>
+        <article class="surface-card calculation-section">
+          <p class="eyebrow">SUPPORTED ESTIMATES</p><h3>Nutrition calculations</h3>
+          <p class="muted">Values come from authenticated backend endpoints. The browser does not calculate BMI, macros, or energy needs.</p>
+          <div class="estimate-stack">
+            <div class="estimate-card"><h4>BMI</h4>
+              @if (bmiEstimate) { <strong class="estimate-value">{{ bmiEstimate.bmi | number:'1.1-1' }}</strong><p>{{ bmiEstimate.note }}</p> }
+              @else { <p>{{ calculationErrors.bmi || 'BMI needs saved height and weight.' }}</p> }
+            </div>
+            <div class="estimate-card"><h4>Daily macro targets</h4>
+              @if (macroTargets) { <p>{{ macroTargets.calorieTarget }} kcal · Protein {{ macroTargets.proteinGrams | number:'1.0-0' }} g · Carbs {{ macroTargets.carbohydrateGrams | number:'1.0-0' }} g · Fat {{ macroTargets.fatGrams | number:'1.0-0' }} g</p><small>{{ macroTargets.method }}</small> }
+              @else { <p>{{ calculationErrors.macros || 'Macro estimates need a saved target and weight.' }}</p> }
+            </div>
+            <div class="estimate-card"><h4>Energy estimate</h4>
+              @if (energyEstimate?.available) { <p>BMR {{ energyEstimate!.bmrCaloriesPerDay | number:'1.0-0' }} kcal · TDEE {{ energyEstimate!.tdeeCaloriesPerDay | number:'1.0-0' }} kcal</p> }
+              <p>{{ energyEstimate?.note || 'Energy estimates are not available.' }}</p>
+            </div>
+            <div class="estimate-card"><h4>Saved food calculator</h4>
+              <label>Food<select [(ngModel)]="calculationFoodId" name="calculationFood"><option [ngValue]="0">Choose saved food</option>
+                @for (food of foods; track food.id) { <option [ngValue]="food.id">{{ food.name }}</option> }</select></label>
+              <label>Servings<input type="number" min="0.01" step="0.1" [(ngModel)]="calculationServings" name="calculationServings" /></label>
+              <button class="button secondary" type="button" (click)="calculateSelectedFood()">Calculate</button>
+              @if (calculation) { <p>{{ calculation.calories | number:'1.0-0' }} kcal · Protein {{ calculation.proteinGrams | number:'1.0-0' }} g · Carbs {{ calculation.carbohydrateGrams | number:'1.0-0' }} g · Fat {{ calculation.fatGrams | number:'1.0-0' }} g</p> }
+            </div>
+          </div>
+        </article>
+        <article class="surface-card nutrition-history-card">
+          <div class="card-heading"><div><p class="eyebrow">FOOD JOURNAL HISTORY</p><h3>Nutrition history</h3></div>
+            <label class="date-control">Review date<input type="date" [(ngModel)]="dailyNutritionDate" name="progressDate" (change)="loadDailyNutrition()" /></label></div>
+          @if (dailyNutritionLoading) { <p role="status">Loading saved totals…</p> }
+          @else if (dailyNutrition) {
+            <div class="history-total"><strong>{{ dailyNutrition.totals.calories | number:'1.0-0' }} kcal</strong>
+              <span>Protein {{ dailyNutrition.totals.proteinGrams | number:'1.0-0' }} g</span>
+              <span>Carbohydrates {{ dailyNutrition.totals.carbohydrateGrams | number:'1.0-0' }} g</span>
+              <span>Fat {{ dailyNutrition.totals.fatGrams | number:'1.0-0' }} g</span></div>
+          } @else { <p class="empty-state">Nutrition history is unavailable for this date.</p> }
+          <p class="small-note">Totals are calculated from journal entries only. Planned meals are not counted as consumed.</p>
+          @if (recentJournalEntries.length) {
+            <div class="recent-list">@for (entry of recentJournalEntries; track entry.id) {
+              <div class="recent-row"><span class="meal-dot" aria-hidden="true"></span>
+                <div><strong>{{ foodName(entry.foodId) }}</strong><small>{{ entry.entryDate }} · {{ entry.mealType.replace('_', ' ') }}</small></div>
+                <span>{{ entry.servings }} serving{{ entry.servings === 1 ? '' : 's' }}</span></div>
+            }</div>
+          } @else { <p class="empty-state">No journal entries saved yet.</p> }
+        </article>
+        <article class="surface-card hydration-card progress-hydration">
+          <p class="eyebrow">HYDRATION</p><div class="hydration-illustration" aria-hidden="true">◌</div>
+          <h3>Drinking-water history</h3>
+          <label class="date-control">Day<input type="date" [(ngModel)]="hydrationDate" name="progressHydrationDate" (change)="loadHydration()" /></label>
+          @if (isLoadingHydration) { <p role="status">Loading hydration history…</p> }
+          @else if (hydration) {
+            <p><strong>{{ hydration.consumedMl | number }} mL</strong> logged · general estimate {{ hydration.targetMl | number }} mL/day</p>
+            <div class="progress-track" role="progressbar" aria-label="Drinking water progress"
+              [attr.aria-valuenow]="hydrationProgressPercent" aria-valuemin="0" aria-valuemax="100">
+              <span [style.width.%]="hydrationProgressPercent"></span>
+            </div>
+            <p class="small-note">{{ hydration.targetAssumptions }}</p>
+            <form class="hydration-form" (ngSubmit)="saveHydrationLog()">
+              <label>Water consumed <span class="unit">mL</span><input type="number" min="1" max="2000" step="1"
+                [(ngModel)]="hydrationWaterMl" name="progressHydrationAmount" required /></label>
+              <button class="button primary" type="submit" [disabled]="isSavingHydration">
+                {{ isSavingHydration ? 'Saving…' : editingHydrationLogId !== null ? 'Correct log' : 'Add water' }}</button>
+              @if (editingHydrationLogId !== null) { <button class="button secondary" type="button" (click)="cancelHydrationEdit()">Cancel</button> }
+            </form>
+            @if (hydration.logs.length) {
+              <div class="measurement-list">@for (log of hydration.logs; track log.id) {
+                <div class="measurement-row"><div><strong>{{ log.consumedAt | date:'shortTime' }}</strong><span>{{ log.waterMl }} mL drinking water</span></div>
+                  <div class="actions"><button class="button secondary small" type="button" (click)="editHydrationLog(log)">Correct</button>
+                    <button class="button danger small" type="button" (click)="deleteHydrationLog(log)">Remove</button></div>
+                </div>
+              }</div>
+            } @else { <p class="empty-state">No water logs for this day.</p> }
+          }
+          @if (hydrationError) { <p class="notice error" role="alert">{{ hydrationError }}</p> }
+        </article>
+      </div>
+    </section>
+  }
+
+  @if (activeView === 'library') {
+    <section id="foods" class="page-section" aria-labelledby="library-heading">
+      <header class="view-heading"><div><p class="eyebrow">YOUR SAVED FOODS</p><h2 id="library-heading">Food Library</h2>
+        <p class="muted">Keep your ingredients and nutrition records organized here.</p></div></header>
+      <article class="surface-card">
+        <details class="management-disclosure" open>
+          <summary>{{ editingFoodId ? 'Update food details' : 'Add a food to your library' }}</summary>
+          <form class="form-grid" (ngSubmit)="saveFood()">
+            <label>Food name<input [(ngModel)]="foodForm.name" name="foodName" required maxlength="150" /></label>
+            <label>Brand or notes<input [(ngModel)]="foodForm.brand" name="foodBrand" maxlength="150" /></label>
+            <label>Serving size <span class="unit">grams</span><input type="number" min="1" [(ngModel)]="foodForm.servingSizeGrams" name="foodServing" required /></label>
+            <label>Calories <span class="unit">per serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.calories" name="foodCalories" required /></label>
+            <label>Protein <span class="unit">g/serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.proteinGrams" name="foodProtein" required /></label>
+            <label>Carbohydrates <span class="unit">g/serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.carbohydrateGrams" name="foodCarbs" required /></label>
+            <label>Fat <span class="unit">g/serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.fatGrams" name="foodFat" required /></label>
+            <label>Fiber <span class="unit">g/serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.fiberGrams" name="foodFiber" required /></label>
+            <label>Sodium <span class="unit">mg/serving</span><input type="number" min="0" step="0.1" [(ngModel)]="foodForm.sodiumMg" name="foodSodium" required /></label>
+            <div class="form-actions"><button class="button primary" type="submit" [disabled]="savingFood">{{ savingFood ? 'Saving…' : editingFoodId ? 'Update food' : 'Add food' }}</button>
+              @if (editingFoodId) { <button class="button secondary" type="button" (click)="cancelFoodEdit()">Cancel</button> }</div>
+          </form>
+        </details>
+        @if (foodError) { <p class="notice error" role="alert">{{ foodError }}</p> }
+        <div class="list-toolbar"><h3>Saved foods <span class="count">{{ filteredFoods.length }}</span></h3>
+          <label class="search-control">Search foods<input type="search" [(ngModel)]="foodSearch" name="foodSearch" placeholder="Name or brand" /></label></div>
+        @if (loading) { <p role="status">Loading foods…</p> }
+        @else if (!filteredFoods.length) { <p class="empty-state">{{ foodSearch ? 'No foods match your search.' : 'Your food library is empty. Add your first food above.' }}</p> }
+        @else {
+          <div class="library-grid">@for (food of filteredFoods; track food.id) {
+            <article class="library-card"><div class="library-icon" aria-hidden="true">✳</div><div class="library-details">
+              <h4>{{ food.name }}</h4><p>{{ food.brand || 'Saved food' }} · {{ food.servingSizeGrams }} g</p>
+              <strong>{{ food.calories | number:'1.0-0' }} kcal</strong><span>Protein {{ food.proteinGrams | number:'1.0-1' }} g · Carbs {{ food.carbohydrateGrams | number:'1.0-1' }} g · Fat {{ food.fatGrams | number:'1.0-1' }} g</span></div>
+              <div class="actions"><button class="button secondary small" type="button" (click)="editFood(food)">Edit</button>
+                <button class="button danger small" type="button" (click)="deleteFood(food)">Remove</button></div></article>
+          }</div>
+        }
+      </article>
+    </section>
+  }
+
+  @if (activeView === 'journal') {
+    <section id="journal" class="page-section" aria-labelledby="journal-heading">
+      <header class="view-heading"><div><p class="eyebrow">WHAT YOU'VE EATEN</p><h2 id="journal-heading">Food Journal</h2>
+        <p class="muted">Log consumed food here. Planned meals in My Plan are never counted as eaten.</p></div>
+        <label class="date-control">Journal date<input type="date" [(ngModel)]="dailyNutritionDate" name="journalSelectedDate" (change)="loadDailyNutrition()" /></label>
+      </header>
+      <div class="journal-grid">
+        <article class="surface-card">
+          <p class="eyebrow">DAILY LOG</p><h3>{{ editingJournalId ? 'Edit entry' : 'Add a journal entry' }}</h3>
+          @if (!foods.length) { <p class="info-panel">Add food to your library before logging a meal.</p> }
+          @if (journalError) { <p class="notice error" role="alert">{{ journalError }}</p> }
+          <form class="form-grid single-column" (ngSubmit)="saveJournalEntry()">
+            <label>Food<select [(ngModel)]="journalForm.foodId" name="journalFood" required><option [ngValue]="0">Choose a saved food</option>
+              @for (food of foods; track food.id) { <option [ngValue]="food.id">{{ food.name }} · {{ food.calories }} kcal/serving</option> }</select></label>
+            <label>Meal type<select [(ngModel)]="journalForm.mealType" name="journalMealType" required>@for (type of mealTypes; track type) { <option [ngValue]="type">{{ type.replace('_', ' ') }}</option> }</select></label>
+            <label>Date<input type="date" [(ngModel)]="journalForm.entryDate" name="journalDate" required /></label>
+            <label>Servings<input type="number" min="0.01" step="0.1" [(ngModel)]="journalForm.servings" name="journalServings" required /></label>
+            <label>Notes<input [(ngModel)]="journalForm.notes" name="journalNotes" maxlength="300" /></label>
+            <div class="form-actions"><button class="button primary" type="submit" [disabled]="!foods.length">{{ editingJournalId ? 'Update entry' : 'Log food' }}</button>
+              @if (editingJournalId) { <button class="button secondary" type="button" (click)="cancelJournalEdit()">Cancel</button> }</div>
+          </form>
+        </article>
+        <article class="surface-card journal-entries">
+          <div class="card-heading"><div><p class="eyebrow">SAVED ENTRIES</p><h3>{{ dailyNutritionDate | date:'fullDate' }}</h3></div>
+            @if (dailyNutritionLoading) { <span role="status">Refreshing…</span> }</div>
+          @if (journalForSelectedDate.length) {
+            @for (entry of journalForSelectedDate; track entry.id) {
+              <div class="journal-entry"><span class="entry-icon" aria-hidden="true">{{ entry.mealType === 'BREAKFAST' ? '☀' : '•' }}</span>
+                <div><strong>{{ foodName(entry.foodId) }}</strong><span>{{ entry.mealType.replace('_', ' ') }} · {{ entry.servings }} serving{{ entry.servings === 1 ? '' : 's' }}</span>
+                  @if (entry.notes) { <small>{{ entry.notes }}</small> }</div>
+                <div class="actions"><button class="button secondary small" type="button" (click)="editJournalEntry(entry)">Edit</button>
+                  <button class="button danger small" type="button" (click)="deleteJournalEntry(entry)">Remove</button></div>
+              </div>
+            }
+          } @else { <p class="empty-state">No food logged for this date.</p> }
+          @if (dailyNutrition) {
+            <div class="daily-summary"><strong>{{ dailyNutrition.totals.calories | number:'1.0-0' }} kcal logged</strong>
+              <span>Protein {{ dailyNutrition.totals.proteinGrams | number:'1.0-0' }} g</span><span>Carbs {{ dailyNutrition.totals.carbohydrateGrams | number:'1.0-0' }} g</span><span>Fat {{ dailyNutrition.totals.fatGrams | number:'1.0-0' }} g</span></div>
+          }
+        </article>
+      </div>
+    </section>
+  }
+
+  <footer class="privacy-note">Nutrition records are loaded through authenticated, member-scoped APIs. This page does not accept or send another member's identifier.</footer>
+</main>

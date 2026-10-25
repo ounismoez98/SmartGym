@@ -32,6 +32,10 @@ public class MealPlan {
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "generation_context_id")
+    private MealPlanGenerationContext generationContext;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
             name = "nutrition_meal_plan_items",
@@ -44,12 +48,19 @@ public class MealPlan {
 
     public MealPlan(String subject, String name, String description, MealType mealType,
                     double targetCalories, List<MealPlanItem> items) {
+        this(subject, name, description, mealType, targetCalories, items, null);
+    }
+
+    public MealPlan(String subject, String name, String description, MealType mealType,
+                    double targetCalories, List<MealPlanItem> items,
+                    MealPlanGenerationContext generationContext) {
         this.subject = subject;
         this.name = name;
         this.description = description;
         this.mealType = mealType;
         this.targetCalories = targetCalories;
         this.items = items == null ? new ArrayList<>() : new ArrayList<>(items);
+        this.generationContext = generationContext;
     }
 
     public Long getId() { return id; }
@@ -60,6 +71,7 @@ public class MealPlan {
     public double getTargetCalories() { return targetCalories; }
     public Instant getCreatedAt() { return createdAt; }
     public List<MealPlanItem> getItems() { return items; }
+    public MealPlanGenerationContext getGenerationContext() { return generationContext; }
 
     public void update(String name, String description, MealType mealType, double targetCalories,
                        List<MealPlanItem> items) {

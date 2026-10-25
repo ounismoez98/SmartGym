@@ -2,40 +2,65 @@ package com.smartgym.nutrition;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @Service
 public class NutritionService {
+    private static final int DAILY_WATER_ESTIMATE_ML = 2000;
+    private static final int MAX_SINGLE_WATER_LOG_ML = 2000;
+    private static final int MAX_DAILY_WATER_LOG_ML = 10000;
     private final FoodRepository foodRepository;
     private final MealPlanRepository mealPlanRepository;
     private final FoodJournalRepository foodJournalRepository;
     private final BodyMeasurementRepository bodyMeasurementRepository;
     private final NutritionProfileRepository nutritionProfileRepository;
+    private final MealPlanGenerationContextRepository generationContextRepository;
+    private final NutritionPlanRepository nutritionPlanRepository;
+    private final HydrationLogRepository hydrationLogRepository;
     private final LocalLlmMealPlanAssistant localLlmMealPlanAssistant;
+    private final TransactionTemplate transactionTemplate;
 
     public NutritionService(FoodRepository foodRepository,
                            MealPlanRepository mealPlanRepository,
                            FoodJournalRepository foodJournalRepository,
                            BodyMeasurementRepository bodyMeasurementRepository,
                            NutritionProfileRepository nutritionProfileRepository,
-                           LocalLlmMealPlanAssistant localLlmMealPlanAssistant) {
+                           MealPlanGenerationContextRepository generationContextRepository,
+                           NutritionPlanRepository nutritionPlanRepository,
+                           HydrationLogRepository hydrationLogRepository,
+                           LocalLlmMealPlanAssistant localLlmMealPlanAssistant,
+                           PlatformTransactionManager transactionManager) {
         this.foodRepository = foodRepository;
         this.mealPlanRepository = mealPlanRepository;
         this.bodyMeasurementRepository = bodyMeasurementRepository;
         this.foodJournalRepository = foodJournalRepository;
         this.nutritionProfileRepository = nutritionProfileRepository;
+        this.generationContextRepository = generationContextRepository;
+        this.nutritionPlanRepository = nutritionPlanRepository;
+        this.hydrationLogRepository = hydrationLogRepository;
         this.localLlmMealPlanAssistant = localLlmMealPlanAssistant;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional
@@ -52,6 +77,15 @@ public class NutritionService {
         validateFoodRequest(request);
         Food food = foodRepository.findByIdAndSubject(foodId, subject)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Food not found."));
+        String updatedFoodText = request.name() + " " + (request.brand() == null ? "" : request.brand());
+        for (MealPlan mealPlan : mealPlanRepository.findDistinctByItemsFoodId(foodId)) {
+            MealPlanGenerationContext context = mealPlan.getGenerationContext();
+            if (context != null && violatesRestriction(updatedFoodText, context.getRestrictions())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The updated food conflicts with a restriction saved for a generated meal.");
+            }
+        }
+
         food.update(request.name(), request.brand(), request.servingSizeGrams(), request.calories(),
                 request.proteinGrams(), request.carbohydrateGrams(), request.fatGrams(),
                 request.fiberGrams(), request.sodiumMg());
@@ -84,9 +118,11 @@ public class NutritionService {
 
     @Transactional
     public MealPlan updateMealPlan(String subject, Long mealPlanId, CreateMealPlanRequest request) {
-        List<MealPlanItem> items = validateMealPlanRequest(subject, request);
         MealPlan mealPlan = mealPlanRepository.findByIdAndSubject(mealPlanId, subject)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal plan not found."));
+        List<MealPlanItem> items = validateMealPlanRequest(subject, request);
+        validateGeneratedMealRestrictions(subject, mealPlan.getGenerationContext(), request.name(),
+                request.description(), items);
         mealPlan.update(request.name(), request.description(), request.mealType(), request.targetCalories(), items);
         return mealPlanRepository.save(mealPlan);
     }
@@ -166,13 +202,37 @@ public class NutritionService {
     @Transactional
     public NutritionProfile createOrUpdateProfile(String subject, NutritionProfileRequest request) {
         validateProfileRequest(request);
+        NutritionProfile.CalorieTargetMode targetMode = request.calorieTargetMode() != null
+                ? request.calorieTargetMode()
+                : request.targetCalories() == null
+                        ? NutritionProfile.CalorieTargetMode.AUTO
+                        : NutritionProfile.CalorieTargetMode.MANUAL;
+        Integer targetCalories = targetMode == NutritionProfile.CalorieTargetMode.AUTO
+                ? calculateEnergyEstimate(request.age(), request.heightCm(), request.weightKg(),
+                        request.energyEquationSex(), request.activityLevel(), request.goal())
+                        .goalAdjustedCalories()
+                : request.targetCalories();
         NutritionProfile profile = nutritionProfileRepository.findFirstBySubjectOrderByCreatedAtDesc(subject)
                 .orElse(new NutritionProfile(subject, request.profileName(), request.goal(),
                         request.dietaryPreference(), request.activityLevel(), request.age(),
-                        request.heightCm(), request.weightKg(), request.targetCalories()));
+                        request.heightCm(), request.weightKg(), targetCalories, targetMode,
+                        request.energyEquationSex()));
+        validateGoalTarget(request.targetWeightKg(), request.targetDate(),
+                request.weightKg(), request.heightCm(), request.age(), request.goal());
+        Set<String> allergies = request.allergies() == null
+                ? profile.getAllergies() : normalizeProfilePreferences(request.allergies(), "allergies");
+        Set<String> intolerances = request.intolerances() == null
+                ? profile.getIntolerances() : normalizeProfilePreferences(request.intolerances(), "intolerances");
+        Set<String> dislikedFoods = request.dislikedFoods() == null
+                ? profile.getDislikedFoods() : normalizeProfilePreferences(request.dislikedFoods(), "disliked foods");
+        Set<String> preferredIngredients = request.preferredIngredients() == null
+                ? profile.getPreferredIngredients()
+                : normalizeProfilePreferences(request.preferredIngredients(), "preferred ingredients");
         profile.update(request.profileName(), request.goal(), request.dietaryPreference(),
                 request.activityLevel(), request.age(), request.heightCm(), request.weightKg(),
-                request.targetCalories());
+                targetCalories, targetMode, request.energyEquationSex(), request.targetWeightKg(),
+                request.targetDate(), request.budgetPreference(), request.maxPreparationMinutes(),
+                request.cookingPreference(), allergies, intolerances, dislikedFoods, preferredIngredients);
         return nutritionProfileRepository.save(profile);
     }
 
@@ -238,9 +298,74 @@ public class NutritionService {
         return new DailyNutritionResult(date, total, mealTotals);
     }
 
+    @Transactional
+    public HydrationView addHydrationLog(String subject, HydrationRequest request) {
+        validateHydrationRequest(request);
+        Instant consumedAt = request.consumedAt() == null ? Instant.now() : request.consumedAt();
+        validateDailyHydrationLimit(subject, consumedAt, request.waterMl(), null);
+        hydrationLogRepository.save(new HydrationLog(subject, consumedAt, request.waterMl()));
+        return getHydrationDay(subject, consumedAt.atZone(ZoneOffset.UTC).toLocalDate());
+    }
+
+    @Transactional
+    public HydrationView correctHydrationLog(String subject, Long logId, HydrationRequest request) {
+        validateHydrationRequest(request);
+        HydrationLog log = hydrationLogRepository.findByIdAndSubject(logId, subject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Hydration log not found."));
+        Instant consumedAt = request.consumedAt() == null ? log.getConsumedAt() : request.consumedAt();
+        validateDailyHydrationLimit(subject, consumedAt, request.waterMl(), log);
+        log.correct(consumedAt, request.waterMl());
+        return getHydrationDay(subject, consumedAt.atZone(ZoneOffset.UTC).toLocalDate());
+    }
+
+    @Transactional
+    public void deleteHydrationLog(String subject, Long logId) {
+        HydrationLog log = hydrationLogRepository.findByIdAndSubject(logId, subject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Hydration log not found."));
+        hydrationLogRepository.delete(log);
+    }
+
+    @Transactional(readOnly = true)
+    public HydrationView getHydrationDay(String subject, LocalDate date) {
+        if (date == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A hydration date is required.");
+        }
+        Instant from = date.atStartOfDay().toInstant(ZoneOffset.UTC);
+        Instant to = date.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        List<HydrationLogView> logs = hydrationLogRepository
+                .findBySubjectAndConsumedAtGreaterThanEqualAndConsumedAtLessThanOrderByConsumedAtAsc(
+                        subject, from, to)
+                .stream().map(log -> new HydrationLogView(log.getId(), log.getConsumedAt(), log.getWaterMl()))
+                .toList();
+        int consumedMl = logs.stream().mapToInt(HydrationLogView::waterMl).sum();
+        return new HydrationView(date, consumedMl, DAILY_WATER_ESTIMATE_ML, logs,
+                "General reference estimate: 2,000 mL/day of drinking water. Actual needs vary. "
+                        + "This tracks drinks only, excludes moisture in food, and is not a medical prescription.");
+    }
+
+    @Transactional(readOnly = true)
+    public List<HydrationLogView> getHydrationHistory(String subject, LocalDate fromDate, LocalDate toDate) {
+        if (fromDate == null || toDate == null || toDate.isBefore(fromDate)
+                || ChronoUnit.DAYS.between(fromDate, toDate) > 365) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Hydration history requires a valid date range of at most 366 days.");
+        }
+        Instant from = fromDate.atStartOfDay().toInstant(ZoneOffset.UTC);
+        Instant to = toDate.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        return hydrationLogRepository
+                .findBySubjectAndConsumedAtGreaterThanEqualAndConsumedAtLessThanOrderByConsumedAtDesc(
+                        subject, from, to)
+                .stream().map(log -> new HydrationLogView(log.getId(), log.getConsumedAt(), log.getWaterMl()))
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public BmiResult calculateBmi(String subject) {
         NutritionProfile profile = getCurrentProfile(subject);
+        if (profile.getAge() != null && profile.getAge() < 18) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Adult BMI calculations and interpretations are not provided for minors.");
+        }
         if (profile.getHeightCm() == null || !isPositiveFinite(profile.getHeightCm())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "A positive profile height in centimetres is required to calculate BMI.");
@@ -257,7 +382,7 @@ public class NutritionService {
                     "The profile height and weight exceed supported numeric limits for BMI.");
         }
         return new BmiResult(bmi,
-                "BMI is an estimate based on height and weight; it is not a measure of body-fat percentage.");
+                "BMI is a screening measurement based on height and weight, not a measure of body-fat percentage, and not a diagnosis.");
     }
 
     @Transactional(readOnly = true)
@@ -298,21 +423,102 @@ public class NutritionService {
     @Transactional(readOnly = true)
     public EnergyEstimateResult calculateEnergyEstimate(String subject) {
         NutritionProfile profile = getCurrentProfile(subject);
-        Optional<GoalCategory> goalCategory = mapGoalCategory(profile.getGoal());
-        OptionalDouble activityFactor = mapActivityFactor(profile.getActivityLevel());
-        String note = "BMR and TDEE are unavailable because this profile has no sex-related input needed "
-                + "to select the Mifflin–St Jeor equation. No value has been assumed; provide the required "
-                + "input through an approved profile change before calculating energy expenditure.";
-        if (goalCategory.isEmpty()) {
-            note += " The saved goal does not match a supported mapping.";
+        return calculateEnergyEstimate(profile.getAge(), profile.getHeightCm(), profile.getWeightKg(),
+                profile.getEnergyEquationSex(), profile.getActivityLevel(), profile.getGoal());
+    }
+
+    @Transactional(readOnly = true)
+    public GoalTimelineResult calculateGoalTimeline(String subject) {
+        NutritionProfile profile = getCurrentProfile(subject);
+        return estimateGoalTimeline(profile.getAge(), profile.getHeightCm(), profile.getWeightKg(),
+                profile.getTargetWeightKg(), profile.getTargetDate(), profile.getGoal(),
+                LocalDate.now(ZoneOffset.UTC));
+    }
+
+    static GoalTimelineResult estimateGoalTimeline(Integer age, Double heightCm, Double currentWeightKg,
+                                                   Double targetWeightKg, LocalDate targetDate,
+                                                   String goal, LocalDate today) {
+        if (age == null || age < 18 || age > 120) {
+            return GoalTimelineResult.unavailable(targetDate,
+                    "Adult weight-goal estimates are not available for minors.");
         }
-        if (activityFactor.isEmpty()) {
-            note += " The saved activity level does not match a supported mapping.";
+        if (targetWeightKg == null || currentWeightKg == null || heightCm == null
+                || !Double.isFinite(targetWeightKg) || !Double.isFinite(currentWeightKg)
+                || !Double.isFinite(heightCm) || currentWeightKg <= 0 || heightCm <= 0
+                || currentWeightKg > 500 || targetWeightKg > 500 || heightCm > 300) {
+            return GoalTimelineResult.unavailable(targetDate,
+                    "Save an adult current weight, target weight, and height to estimate a weight-loss timeline.");
         }
-        return new EnergyEstimateResult(false, null, null,
-                goalCategory.map(Enum::name).orElse(null),
-                activityFactor.isPresent() ? activityFactor.getAsDouble() : null,
-                note);
+        if (!"weight loss".equalsIgnoreCase(goal == null ? "" : goal.trim())) {
+            return GoalTimelineResult.unavailable(targetDate,
+                    "A documented timeline method is available for weight-loss goals only; no rate is applied to maintenance or weight-gain goals.");
+        }
+        double lossKg = currentWeightKg - targetWeightKg;
+        if (lossKg <= 0) {
+            return GoalTimelineResult.unavailable(targetDate,
+                    "The saved target is not below the current weight, so a weight-loss timeline cannot be estimated.");
+        }
+        long minWeeks = Math.max(1, (long) Math.ceil(lossKg / 0.5));
+        long maxWeeks = Math.max(minWeeks, (long) Math.ceil(lossKg / 0.25));
+        LocalDate earliest = today.plusWeeks(minWeeks);
+        LocalDate latest = today.plusWeeks(maxWeeks);
+        String requestedDateStatus = targetDate == null ? "NOT_SET"
+                : targetDate.isBefore(earliest) ? "EARLIER_THAN_ESTIMATE"
+                : targetDate.isAfter(latest) ? "LATER_THAN_ESTIMATE" : "WITHIN_ESTIMATE";
+        String note = "Approximate range uses a conservative reference rate of 0.25–0.5 kg per week; actual progress varies and is not guaranteed. "
+                + (requestedDateStatus.equals("EARLIER_THAN_ESTIMATE")
+                    ? "The requested date is earlier than this estimate and may be unrealistic."
+                    : requestedDateStatus.equals("LATER_THAN_ESTIMATE")
+                        ? "The requested date is later than this estimate; it is a personal target, not a prediction."
+                        : requestedDateStatus.equals("WITHIN_ESTIMATE")
+                            ? "The requested date falls within this approximate range, not a promise."
+                            : "No desired date was set.");
+        return new GoalTimelineResult(true, minWeeks, maxWeeks, earliest, latest,
+                targetDate, requestedDateStatus, note,
+                "Weight loss only; 0.25–0.5 kg/week reference; adult profile; calculated from saved current and target weights. "
+                        + "BMI is a screening measurement, not a diagnosis.");
+    }
+
+    private EnergyEstimateResult calculateEnergyEstimate(Integer age, Double heightCm, Double weightKg,
+                                                         NutritionProfile.EnergyEquationSex equationSex,
+                                                         String activityLevel, String goal) {
+        Optional<GoalCategory> goalCategory = mapGoalCategory(goal);
+        OptionalDouble activityFactor = mapActivityFactor(activityLevel);
+        String missing = age == null || age < 18 ? "an age of at least 18"
+                : heightCm == null || !isPositiveFinite(heightCm) ? "height"
+                : weightKg == null || !isPositiveFinite(weightKg) ? "current weight"
+                : equationSex == null ? "the optional Mifflin–St Jeor equation input"
+                : activityFactor.isEmpty() ? "a supported activity level"
+                : goalCategory.isEmpty() ? "a supported fitness goal" : null;
+        if (missing != null) {
+            return new EnergyEstimateResult(false, null, null,
+                    goalCategory.map(Enum::name).orElse(null),
+                    activityFactor.isPresent() ? activityFactor.getAsDouble() : null,
+                    null, "An adult calorie estimate needs " + missing
+                            + ". Enter the missing profile details; no values have been assumed.");
+        }
+
+        double sexAdjustment = equationSex == NutritionProfile.EnergyEquationSex.MALE ? 5 : -161;
+        double bmr = 10 * weightKg + 6.25 * heightCm - 5 * age + sexAdjustment;
+        double tdee = bmr * activityFactor.getAsDouble();
+        double goalAdjustedCalories = switch (goalCategory.orElseThrow()) {
+            case WEIGHT_LOSS -> tdee * 0.85;
+            case MAINTENANCE -> tdee;
+            case MUSCLE_GAIN -> tdee * 1.05;
+        };
+        if (!isPositiveFinite(bmr) || !isPositiveFinite(tdee)
+                || !isPositiveFinite(goalAdjustedCalories)
+                || goalAdjustedCalories > Integer.MAX_VALUE) {
+            return new EnergyEstimateResult(false, null, null, goalCategory.orElseThrow().name(),
+                    activityFactor.getAsDouble(), null,
+                    "The saved measurements exceed the supported range for an energy estimate.");
+        }
+        int roundedTarget = (int) Math.round(goalAdjustedCalories);
+        return new EnergyEstimateResult(true, bmr, tdee, goalCategory.orElseThrow().name(),
+                activityFactor.getAsDouble(), roundedTarget,
+                "Estimated with Mifflin–St Jeor for adults. The daily target uses an approximate 15% deficit "
+                        + "for weight loss, maintenance calories, or a 5% surplus for muscle gain. "
+                        + "This is an estimate, not a medical recommendation.");
     }
 
     static Optional<GoalCategory> mapGoalCategory(String goal) {
@@ -345,86 +551,600 @@ public class NutritionService {
         if (request == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meal generation request is required.");
         }
+        List<String> requestedRestrictions = normalizeRestrictions(request.restrictions());
         NutritionProfile profile = nutritionProfileRepository.findFirstBySubjectOrderByCreatedAtDesc(subject)
                 .orElse(null);
+        List<String> restrictions = effectiveRestrictions(profile, requestedRestrictions);
+        AiMealRequest effectiveRequest = aiMealRequest(profile, request.goal(), request.targetCalories(),
+                request.dietStyle(), restrictions);
         return localLlmMealPlanAssistant.generateAsync(
-                request, profile, foodRepository.findBySubjectOrderByNameAsc(subject));
+                effectiveRequest,
+                profile, foodRepository.findBySubjectOrderByNameAsc(subject))
+                .thenApply(suggestion -> {
+                    if (!suggestion.available() || suggestion.plan() == null) {
+                        return suggestion;
+                    }
+                    MealPlanGenerationContext context = generationContextRepository.save(
+                            new MealPlanGenerationContext(subject, restrictions));
+                    return new MealPlanSuggestion(suggestion.available(), suggestion.status(),
+                            suggestion.plan(), suggestion.note(), context.getId().toString());
+                });
+    }
+
+    public CompletableFuture<NutritionPlanApi.DraftResponse> generatePersistentPlanDraft(
+            String subject, NutritionPlanApi.GenerateRequest request) {
+        if (request == null || request.planType() == null || request.startDate() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A plan type and start date are required.");
+        }
+        NutritionProfile profile = nutritionProfileRepository.findFirstBySubjectOrderByCreatedAtDesc(subject)
+                .orElse(null);
+        List<Food> foods = foodRepository.findBySubjectOrderByNameAsc(subject);
+        List<String> restrictions = effectiveRestrictions(profile, request.restrictions());
+        if (profile == null || profile.getTargetCalories() == null
+                || profile.getTargetCalories() <= 0 || isBlank(profile.getGoal())) {
+            return CompletableFuture.completedFuture(new NutritionPlanApi.DraftResponse(false, "UNAVAILABLE",
+                    "Save a nutrition profile with a fitness goal and calorie target first.",
+                    null, request.planType(), request.startDate(), null, null, null, List.of()));
+        }
+
+        int dayCount = request.planType() == NutritionPlan.PlanType.WEEKLY ? 7 : 1;
+        AiMealRequest aiRequest = aiMealRequest(profile, profile.getGoal(), profile.getTargetCalories(),
+                profile.getDietaryPreference(), restrictions);
+        return generatePlanDaysSequentially(aiRequest, profile, foods, dayCount, new ArrayList<>())
+                .thenApply(suggestions -> {
+                    Optional<MealPlanSuggestion> unavailable = suggestions.stream()
+                            .filter(suggestion -> !suggestion.available() || suggestion.plan() == null).findFirst();
+                    if (unavailable.isPresent()) {
+                        MealPlanSuggestion result = unavailable.orElseThrow();
+                        return new NutritionPlanApi.DraftResponse(false, result.status(), result.note(),
+                                null, request.planType(), request.startDate(), null, null, null, List.of());
+                    }
+
+                    MealPlanGenerationContext validationContext =
+                            new MealPlanGenerationContext(subject, restrictions);
+                    for (MealPlanSuggestion suggestion : suggestions) {
+                        validateGeneratedPlanForRestrictions(subject, validationContext, suggestion.plan());
+                    }
+                    MealPlanSuggestion first = suggestions.get(0);
+                    List<NutritionPlanApi.DraftDay> days = new ArrayList<>();
+                    for (int i = 0; i < suggestions.size(); i++) {
+                        GeneratedMealPlan plan = suggestions.get(i).plan();
+                        NutritionEstimate totals = emptyEstimate();
+                        for (GeneratedMeal meal : plan.meals()) {
+                            totals = totals.add(meal.estimatedNutrition(), 1);
+                        }
+                        days.add(new NutritionPlanApi.DraftDay(request.startDate().plusDays(i),
+                                plan.meals(), totals, plan.shoppingList(), plan.alternatives()));
+                    }
+                    MealPlanGenerationContext context = generationContextRepository.save(
+                            new MealPlanGenerationContext(subject, restrictions));
+                    return new NutritionPlanApi.DraftResponse(true, "AI_GENERATED",
+                            "Review every meal, ingredient, portion, and estimate before saving. Nutrition is an estimate; "
+                                    + "AI output cannot establish allergy or medical safety.",
+                            context.getId().toString(), request.planType(), request.startDate(),
+                            first.plan().planName(), profile.getGoal(), first.plan(), days);
+                });
+    }
+
+    private CompletableFuture<List<MealPlanSuggestion>> generatePlanDaysSequentially(
+            AiMealRequest request, NutritionProfile profile, List<Food> foods,
+            int dayCount, List<MealPlanSuggestion> suggestions) {
+        if (suggestions.size() == dayCount
+                || (!suggestions.isEmpty()
+                && (!suggestions.getLast().available() || suggestions.getLast().plan() == null))) {
+            return CompletableFuture.completedFuture(suggestions);
+        }
+        return localLlmMealPlanAssistant.generatePersistentPlanAsync(request, profile, foods)
+                .thenCompose(suggestion -> {
+                    suggestions.add(suggestion);
+                    return generatePlanDaysSequentially(request, profile, foods, dayCount, suggestions);
+                });
     }
 
     @Transactional
+    public NutritionPlanApi.PlanView savePersistentPlan(String subject, NutritionPlanApi.SaveRequest request) {
+        if (request == null || isBlank(request.generationContextId()) || request.planType() == null
+                || request.startDate() == null || isBlank(request.planName()) || request.planName().length() > 120
+                || isBlank(request.goal()) || request.goal().length() > 100) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A generation context, plan type, start date, name, and goal are required.");
+        }
+        int expectedDayCount = request.planType() == NutritionPlan.PlanType.WEEKLY ? 7 : 1;
+        if (request.days() == null || request.days().size() != expectedDayCount) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The submitted plan must contain exactly the selected number of days.");
+        }
+        MealPlanGenerationContext context = generationContextRepository.findAvailableForUpdate(
+                        parseGenerationContextId(request.generationContextId()), subject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The generation context is invalid, belongs to another member, or has already been used."));
+        Set<String> restrictions = context.getRestrictions();
+        if (violatesRestriction(request.planName(), restrictions) || violatesRestriction(request.goal(), restrictions)) {
+            throw restrictionConflict();
+        }
+
+        NutritionPlan plan = new NutritionPlan(subject, request.planName(), request.goal(),
+                request.planType(), request.startDate(), context);
+        for (int dayIndex = 0; dayIndex < expectedDayCount; dayIndex++) {
+            NutritionPlanApi.DayInput dayInput = request.days().get(dayIndex);
+            LocalDate expectedDate = request.startDate().plusDays(dayIndex);
+            if (dayInput == null || !expectedDate.equals(dayInput.date())
+                    || dayInput.meals() == null || dayInput.meals().isEmpty() || dayInput.meals().size() > 12) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Plan days must be consecutive from the start date and contain between one and twelve meals.");
+            }
+            NutritionPlanDay day = new NutritionPlanDay(expectedDate);
+            for (NutritionPlanApi.MealInput meal : dayInput.meals()) {
+                day.addMeal(toPersistentMeal(subject, context, meal));
+            }
+            plan.addDay(day);
+        }
+        context.consume();
+        return toPlanView(nutritionPlanRepository.saveAndFlush(plan));
+    }
+
+    @Transactional(readOnly = true)
+    public List<NutritionPlanApi.PlanView> listPersistentPlans(String subject) {
+        return nutritionPlanRepository.findBySubjectOrderByStartDateDescCreatedAtDesc(subject).stream()
+                .map(this::toPlanView).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public NutritionPlanApi.PlanView getPersistentPlan(String subject, Long planId) {
+        return nutritionPlanRepository.findByIdAndSubject(planId, subject)
+                .map(this::toPlanView)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nutrition plan not found."));
+    }
+
+    public CompletableFuture<NutritionPlanApi.PlanView> regeneratePlanDay(
+            String subject, Long planId, LocalDate date, long expectedVersion) {
+        PlanGenerationSnapshot snapshot = transactionTemplate.execute(status -> {
+            NutritionPlan plan = nutritionPlanRepository.findByIdAndSubject(planId, subject)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nutrition plan not found."));
+            if (plan.getPlanType() != NutritionPlan.PlanType.WEEKLY
+                    || date == null || plan.getDays().stream().noneMatch(day -> day.getPlanDate().equals(date))) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "The requested day is not in this weekly plan.");
+            }
+            if (plan.getVersion() != expectedVersion) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "The plan changed; reload it before regenerating a day.");
+            }
+            return generationSnapshot(subject, plan, date, null, expectedVersion);
+        });
+        return generatePlanDay(snapshot).thenApply(suggestion -> {
+            if (!suggestion.available() || suggestion.plan() == null) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, suggestion.note());
+            }
+            return transactionTemplate.execute(status -> {
+                NutritionPlan plan = lockPlan(subject, planId, expectedVersion);
+                NutritionPlanDay day = findDay(plan, date);
+                MealPlanGenerationContext context = plan.getGenerationContext();
+                validatePlanMeals(subject, context, suggestion.plan().planName(), suggestion.plan().goal(),
+                        suggestion.plan().meals().stream().map(this::asMealInput).toList());
+                day.replaceMeals(persistedMeals(subject, context,
+                        suggestion.plan().meals().stream().map(this::asMealInput).toList()));
+                plan.markChanged();
+                return toPlanView(nutritionPlanRepository.saveAndFlush(plan));
+            });
+        });
+    }
+
+    public CompletableFuture<NutritionPlanApi.PlanView> replacePlanMeal(
+            String subject, Long planId, Long mealId, long expectedVersion) {
+        PlanGenerationSnapshot snapshot = transactionTemplate.execute(status -> {
+            NutritionPlan plan = nutritionPlanRepository.findByIdAndSubject(planId, subject)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nutrition plan not found."));
+            if (plan.getVersion() != expectedVersion) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "The plan changed; reload it before replacing a meal.");
+            }
+            NutritionPlanDay containingDay = plan.getDays().stream()
+                    .filter(day -> day.getMeals().stream().anyMatch(meal -> meal.getId().equals(mealId)))
+                    .findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal not found in this plan."));
+            NutritionPlanMeal oldMeal = containingDay.getMeals().stream()
+                    .filter(meal -> meal.getId().equals(mealId)).findFirst().orElseThrow();
+            return generationSnapshot(subject, plan, containingDay.getPlanDate(), oldMeal.getMealType(), expectedVersion);
+        });
+        return generatePlanDay(snapshot).thenApply(suggestion -> {
+            if (!suggestion.available() || suggestion.plan() == null) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, suggestion.note());
+            }
+            GeneratedMeal replacement = suggestion.plan().meals().stream()
+                    .filter(meal -> meal.mealType() == snapshot.mealType()).findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                            "The generated response did not contain a replacement of the requested meal type."));
+            return transactionTemplate.execute(status -> {
+                NutritionPlan plan = lockPlan(subject, planId, expectedVersion);
+                NutritionPlanDay day = findDay(plan, snapshot.date());
+                MealPlanGenerationContext context = plan.getGenerationContext();
+                NutritionPlanApi.MealInput input = asMealInput(replacement);
+                validatePlanMeals(subject, context, replacement.name(), plan.getGoal(), List.of(input));
+                day.replaceMeal(mealId, toPersistentMeal(subject, context, input));
+                plan.markChanged();
+                return toPlanView(nutritionPlanRepository.saveAndFlush(plan));
+            });
+        });
+    }
+
+    @Transactional
+    public NutritionPlanApi.PlanView editPlanMeal(
+            String memberSubject, Long planId, LocalDate date, Long mealId,
+            NutritionPlanApi.EditMealRequest request) {
+        if (request == null || request.meal() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Edited meal details are required.");
+        }
+        NutritionPlan plan = lockPlan(memberSubject, planId, request.expectedVersion());
+        NutritionPlanDay day = findDay(plan, date);
+        if (day.getMeals().stream().noneMatch(meal -> meal.getId().equals(mealId))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal not found in this plan day.");
+        }
+        MealPlanGenerationContext context = plan.getGenerationContext();
+        validatePlanMeals(memberSubject, context, plan.getName(), plan.getGoal(), List.of(request.meal()));
+        day.replaceMeal(mealId, toPersistentMeal(memberSubject, context, request.meal()));
+        plan.markChanged();
+        return toPlanView(nutritionPlanRepository.saveAndFlush(plan));
+    }
+
+    private CompletableFuture<MealPlanSuggestion> generatePlanDay(PlanGenerationSnapshot snapshot) {
+        NutritionProfile profile = nutritionProfileRepository.findFirstBySubjectOrderByCreatedAtDesc(snapshot.subject())
+                .orElse(null);
+        if (profile == null || profile.getTargetCalories() == null || profile.getTargetCalories() <= 0) {
+            return CompletableFuture.completedFuture(new MealPlanSuggestion(false, "UNAVAILABLE", null,
+                    "A saved nutrition profile with a calorie target is required."));
+        }
+        List<String> restrictions = effectiveRestrictions(profile, List.copyOf(snapshot.restrictions()));
+        return localLlmMealPlanAssistant.generatePersistentPlanAsync(
+                aiMealRequest(profile, profile.getGoal(), profile.getTargetCalories(),
+                        profile.getDietaryPreference(), restrictions),
+                profile, foodRepository.findBySubjectOrderByNameAsc(snapshot.subject()));
+    }
+
+    private List<String> effectiveRestrictions(NutritionProfile profile, List<String> requested) {
+        LinkedHashSet<String> combined = new LinkedHashSet<>(normalizeRestrictions(requested));
+        if (profile != null) {
+            combined.addAll(profile.getAllergies());
+            combined.addAll(profile.getIntolerances());
+            combined.addAll(profile.getDislikedFoods());
+        }
+        return List.copyOf(combined);
+    }
+
+    private AiMealRequest aiMealRequest(NutritionProfile profile, String goal, Integer targetCalories,
+                                        String dietStyle, List<String> restrictions) {
+        return new AiMealRequest(goal, targetCalories, dietStyle, restrictions,
+                profile == null ? List.of() : List.copyOf(profile.getDislikedFoods()),
+                profile == null ? List.of() : List.copyOf(profile.getPreferredIngredients()),
+                profile == null ? null : profile.getBudgetPreference(),
+                profile == null ? null : profile.getMaxPreparationMinutes(),
+                profile == null ? null : profile.getCookingPreference());
+    }
+
+    private PlanGenerationSnapshot generationSnapshot(
+            String subject, NutritionPlan plan, LocalDate date,
+            MealPlan.MealType mealType, long expectedVersion) {
+        MealPlanGenerationContext context = plan.getGenerationContext();
+        if (context == null || !context.getSubject().equals(subject)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The saved plan has no valid member generation context.");
+        }
+        return new PlanGenerationSnapshot(subject, plan.getPlanType(), date, mealType,
+                expectedVersion, context.getRestrictions());
+    }
+
+    private NutritionPlan lockPlan(String subject, Long planId, long expectedVersion) {
+        NutritionPlan plan = nutritionPlanRepository.findOwnedForUpdate(planId, subject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nutrition plan not found."));
+        if (plan.getVersion() != expectedVersion) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The plan changed during generation; reload it before applying this result.");
+        }
+        return plan;
+    }
+
+    private NutritionPlanDay findDay(NutritionPlan plan, LocalDate date) {
+        return plan.getDays().stream().filter(day -> day.getPlanDate().equals(date)).findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Plan day not found."));
+    }
+
+    private List<NutritionPlanMeal> persistedMeals(
+            String subject, MealPlanGenerationContext context, List<NutritionPlanApi.MealInput> meals) {
+        return meals.stream().map(meal -> toPersistentMeal(subject, context, meal)).toList();
+    }
+
+    private NutritionPlanMeal toPersistentMeal(
+            String subject, MealPlanGenerationContext context, NutritionPlanApi.MealInput meal) {
+        validatePlanMeals(subject, context, meal == null ? null : meal.name(),
+                meal == null ? null : meal.name(), meal == null ? null : List.of(meal));
+        List<NutritionPlanMeal.NutritionPlanMealItem> foods = meal.foods().stream()
+                .map(food -> new NutritionPlanMeal.NutritionPlanMealItem(
+                        food.foodId(), food.name().trim(), food.servings()))
+                .toList();
+        String source = meal.nutritionSource() == null || meal.nutritionSource().isBlank()
+                ? "REVIEW_REQUIRED" : meal.nutritionSource();
+        return new NutritionPlanMeal(meal.name().trim(), meal.mealType(), meal.servingSizeGrams(),
+                meal.preparationInstructions().trim(), meal.estimatedNutrition(), source, foods);
+    }
+
+    private void validatePlanMeals(String subject, MealPlanGenerationContext context, String planName,
+                                   String goal, List<NutritionPlanApi.MealInput> meals) {
+        if (context == null || !context.getSubject().equals(subject)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A valid member-owned generation context is required for this plan.");
+        }
+        Set<String> restrictions = context.getRestrictions();
+        if (violatesRestriction(planName, restrictions) || violatesRestriction(goal, restrictions)) {
+            throw restrictionConflict();
+        }
+        if (meals == null || meals.isEmpty() || meals.size() > 12) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Each plan day must contain between one and twelve meals.");
+        }
+        for (NutritionPlanApi.MealInput meal : meals) {
+            if (meal == null || isBlank(meal.name()) || meal.name().length() > 120
+                    || meal.mealType() == null || meal.servingSizeGrams() == null
+                    || meal.servingSizeGrams() <= 0 || meal.servingSizeGrams() > 2500
+                    || isBlank(meal.preparationInstructions()) || meal.preparationInstructions().length() > 2000
+                    || meal.foods() == null || meal.foods().isEmpty() || meal.foods().size() > 30
+                    || !validGeneratedNutrition(meal.estimatedNutrition())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Each meal requires a name, type, serving size, instructions, ingredients, and valid estimated nutrition.");
+            }
+            if (meal.nutritionSource() != null && !Set.of("SAVED_FOOD_DATA", "MODEL_ESTIMATE",
+                    "REVIEW_REQUIRED").contains(meal.nutritionSource())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The meal nutrition source is not supported.");
+            }
+            if (violatesRestriction(meal.name(), restrictions)
+                    || violatesRestriction(meal.preparationInstructions(), restrictions)) {
+                throw restrictionConflict();
+            }
+            for (GeneratedFood item : meal.foods()) {
+                if (item == null || isBlank(item.name()) || item.name().length() > 150
+                        || item.servings() == null
+                        || !isPositiveFinite(item.servings()) || violatesRestriction(item.name(), restrictions)) {
+                    throw restrictionConflict();
+                }
+                if (item.foodId() != null) {
+                    Food savedFood = foodRepository.findByIdAndSubject(item.foodId(), subject)
+                            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                    "A selected saved food does not belong to this member."));
+                    if (violatesRestriction(savedFood.getName() + " " + savedFood.getBrand(), restrictions)) {
+                        throw restrictionConflict();
+                    }
+                }
+            }
+        }
+    }
+
+    private void validateGeneratedPlanForRestrictions(
+            String subject, MealPlanGenerationContext context, GeneratedMealPlan plan) {
+        if (plan == null || plan.shoppingList() == null || plan.alternatives() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The generated response is missing valid shopping-list or alternative data.");
+        }
+        validatePlanMeals(subject, context, plan.planName(), plan.goal(),
+                plan.meals() == null ? null : plan.meals().stream().map(this::asMealInput).toList());
+        if (plan.shoppingList().stream().anyMatch(item -> violatesRestriction(item, context.getRestrictions()))
+                || plan.alternatives().stream().anyMatch(item -> violatesRestriction(item, context.getRestrictions()))) {
+            throw restrictionConflict();
+        }
+    }
+
+    private NutritionPlanApi.MealInput asMealInput(GeneratedMeal meal) {
+        return new NutritionPlanApi.MealInput(meal.name(), meal.mealType(), meal.servingSizeGrams(),
+                meal.preparationInstructions(), meal.foods(), meal.estimatedNutrition(), meal.nutritionSource());
+    }
+
+    private NutritionPlanApi.PlanView toPlanView(NutritionPlan plan) {
+        List<NutritionPlanApi.DayView> days = plan.getDays().stream()
+                .sorted(java.util.Comparator.comparing(NutritionPlanDay::getPlanDate))
+                .map(day -> new NutritionPlanApi.DayView(day.getId(), day.getPlanDate(),
+                        day.getMeals().stream().sorted(java.util.Comparator.comparingInt(
+                                        NutritionPlanMeal::getPosition))
+                                .map(meal -> new NutritionPlanApi.MealView(meal.getId(), meal.getName(),
+                                        meal.getMealType(), meal.getServingSizeGrams(),
+                                        meal.getPreparationInstructions(), new NutritionEstimate(meal.getCalories(),
+                                        meal.getProteinGrams(), meal.getCarbohydrateGrams(), meal.getFatGrams(),
+                                        meal.getFiberGrams(), meal.getSodiumMg()), meal.getNutritionSource(),
+                                        meal.getFoods().stream().map(item -> new NutritionPlanApi.FoodView(
+                                                item.getFoodId(), item.getFoodName(), item.getServings())).toList()))
+                                .toList()))
+                .toList();
+        return new NutritionPlanApi.PlanView(plan.getId(), plan.getName(), plan.getGoal(), plan.getPlanType(),
+                plan.getStartDate(), plan.getEndDate(), plan.getVersion(), days);
+    }
+
+    private NutritionEstimate emptyEstimate() {
+        return new NutritionEstimate(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    }
+
+    private ResponseStatusException restrictionConflict() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "The meal conflicts with an ingredient restriction saved for this plan.");
+    }
+
+    private record PlanGenerationSnapshot(String subject, NutritionPlan.PlanType planType,
+                                          LocalDate date, MealPlan.MealType mealType,
+                                          long expectedVersion, Set<String> restrictions) {}
+
+    @Transactional
     public List<MealPlan> saveGeneratedMealPlan(String subject, SaveGeneratedMealPlanRequest request) {
-        if (request == null || isBlank(request.planName()) || request.planName().length() > 50
-                || request.goal() == null || request.goal().isBlank()
+        if (request == null || isBlank(request.generationContextId())
+                || isBlank(request.planName()) || request.planName().length() > 50
+                || isBlank(request.goal()) || request.goal().length() > 100
                 || request.meals() == null || request.meals().isEmpty() || request.meals().size() > 12) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A plan name, goal, and between one and twelve meals are required.");
+                    "A valid generation context, plan name, goal, and between one and twelve meals are required.");
         }
-        List<String> restrictions = request.restrictions() == null ? List.of()
-                : request.restrictions().stream().filter(value -> value != null)
-                        .map(String::trim).filter(value -> !value.isBlank()).toList();
-        if (restrictions.stream().anyMatch(value -> value.length() > 100)
-                || violatesRestriction(request.planName(), restrictions)
+        UUID contextId = parseGenerationContextId(request.generationContextId());
+        MealPlanGenerationContext context = generationContextRepository
+                .findAvailableForUpdate(contextId, subject)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The generation context is invalid, belongs to another member, or has already been used."));
+        Set<String> restrictions = context.getRestrictions();
+        if (request.restrictions() != null
+                && !new LinkedHashSet<>(normalizeRestrictions(request.restrictions())).equals(restrictions)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Restrictions must match the original generation context.");
+        }
+        if (violatesRestriction(request.planName(), restrictions)
                 || violatesRestriction(request.goal(), restrictions)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "The reviewed plan contains an explicitly excluded ingredient or restriction.");
         }
-        List<CreateMealPlanRequest> validatedPlans = new ArrayList<>();
+
+        List<ValidatedGeneratedMeal> validatedMeals = new ArrayList<>();
         for (SaveGeneratedMealRequest meal : request.meals()) {
-            if (meal == null || isBlank(meal.name()) || meal.name().length() > 60
+            if (meal == null || isBlank(meal.name()) || meal.name().length() > 120
                     || meal.mealType() == null || meal.preparationInstructions() == null
-                    || meal.preparationInstructions().isBlank()
-                    || meal.preparationInstructions().length() > 350
-                    || meal.foods() == null || meal.foods().isEmpty()) {
+                    || meal.preparationInstructions().isBlank() || meal.preparationInstructions().length() > 350
+                    || meal.servingSizeGrams() == null || meal.servingSizeGrams() <= 0
+                    || meal.servingSizeGrams() > 2500
+                    || meal.ingredients() == null || meal.ingredients().isEmpty()
+                    || meal.ingredients().size() > 30 || !validGeneratedNutrition(meal.estimatedNutrition())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Each saved meal requires a name, meal type, preparation instructions, and foods.");
+                        "Each meal requires a name, type, recipe, serving size, ingredients, and valid estimated nutrition.");
             }
             if (violatesRestriction(meal.name(), restrictions)
                     || violatesRestriction(meal.preparationInstructions(), restrictions)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "The reviewed plan contains an explicitly excluded ingredient or restriction.");
             }
-            double mealCalories = 0;
-            for (MealPlanItemRequest item : meal.foods()) {
-                if (item == null || item.foodId() == null || item.servings() == null
-                        || !isPositiveFinite(item.servings())) {
+            for (GeneratedFood ingredient : meal.ingredients()) {
+                if (ingredient == null || isBlank(ingredient.name()) || ingredient.name().length() > 150
+                        || ingredient.servings() == null || !isPositiveFinite(ingredient.servings())
+                        || violatesRestriction(ingredient.name(), restrictions)) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Each saved food requires an owned food id and positive serving quantity.");
-                }
-                Food food = foodRepository.findByIdAndSubject(item.foodId(), subject)
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                                "A selected food was not found for your account."));
-                if (violatesRestriction(food.getName(), restrictions)) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "A selected saved food matches an explicitly excluded ingredient or restriction.");
-                }
-                mealCalories += food.getCalories() * item.servings();
-                if (!isNonNegativeFinite(mealCalories)) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Meal nutrition exceeds supported numeric limits.");
+                            "A meal ingredient is invalid or matches an explicitly excluded restriction.");
                 }
             }
-            String name = request.planName() + " - " + meal.name();
-            String description = "Goal: " + request.goal() + "\nPreparation: " + meal.preparationInstructions();
-            validatedPlans.add(new CreateMealPlanRequest(name, description, meal.mealType(),
-                    mealCalories, meal.foods()));
+            CreateFoodRequest generatedFood = new CreateFoodRequest(meal.name(),
+                    "AI-generated recipe; nutrition is an estimate", meal.servingSizeGrams(),
+                    meal.estimatedNutrition().calories(), meal.estimatedNutrition().proteinGrams(),
+                    meal.estimatedNutrition().carbohydrateGrams(), meal.estimatedNutrition().fatGrams(),
+                    meal.estimatedNutrition().fiberGrams(), meal.estimatedNutrition().sodiumMg());
+            validateFoodRequest(generatedFood);
+            validatedMeals.add(new ValidatedGeneratedMeal(meal, generatedFood));
         }
+
+        context.consume();
         List<MealPlan> savedPlans = new ArrayList<>();
-        for (CreateMealPlanRequest validatedPlan : validatedPlans) {
-            List<MealPlanItem> items = validateMealPlanRequest(subject, validatedPlan);
-            savedPlans.add(mealPlanRepository.save(new MealPlan(subject, validatedPlan.name(),
-                    validatedPlan.description(), validatedPlan.mealType(), validatedPlan.targetCalories(), items)));
+        for (ValidatedGeneratedMeal validated : validatedMeals) {
+            SaveGeneratedMealRequest meal = validated.meal();
+            CreateFoodRequest generatedFood = validated.food();
+            String ingredients = meal.ingredients().stream()
+                    .map(ingredient -> ingredient.name() + " (" + ingredient.servings() + " servings)")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            String description = "Plan: " + request.planName() + "\nGoal: " + request.goal()
+                    + "\nIngredients: " + ingredients + "\nPreparation: " + meal.preparationInstructions();
+            if (description.length() > 500) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The recipe details are too long to save. Shorten the ingredient list or instructions.");
+            }
+            Food savedFood = foodRepository.save(new Food(subject, generatedFood.name(), generatedFood.brand(),
+                    generatedFood.servingSizeGrams(), generatedFood.calories(), generatedFood.proteinGrams(),
+                    generatedFood.carbohydrateGrams(), generatedFood.fatGrams(),
+                    generatedFood.fiberGrams(), generatedFood.sodiumMg()));
+            List<MealPlanItem> items = List.of(new MealPlanItem(savedFood.getId(), 1.0, savedFood.getName()));
+            savedPlans.add(mealPlanRepository.save(new MealPlan(subject, meal.name(), description,
+                    meal.mealType(), meal.estimatedNutrition().calories(), items, context)));
         }
         return savedPlans;
     }
 
-    private boolean violatesRestriction(String text, List<String> restrictions) {
-        String normalized = text.toLowerCase(Locale.ROOT);
+    private UUID parseGenerationContextId(String value) {
+        try {
+            UUID contextId = UUID.fromString(value);
+            if (!contextId.toString().equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException("Non-canonical UUID");
+            }
+            return contextId;
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A valid generation context is required.");
+        }
+    }
+
+    private List<String> normalizeRestrictions(List<String> requestedRestrictions) {
+        if (requestedRestrictions != null && requestedRestrictions.size() > 20) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "At most twenty generation restrictions may be supplied.");
+        }
+        LinkedHashSet<String> restrictions = new LinkedHashSet<>(
+                List.of("pork", "bacon", "ham", "lard", "pancetta", "prosciutto", "pork sausage", "pork gelatin"));
+        for (String restriction : requestedRestrictions == null ? List.<String>of() : requestedRestrictions) {
+            if (isBlank(restriction) || restriction.length() > 100) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Each generation restriction must contain 1 to 100 characters.");
+            }
+            restrictions.add(restriction.trim());
+        }
+        return List.copyOf(restrictions);
+    }
+
+    private void validateGeneratedMealRestrictions(
+            String subject,
+            MealPlanGenerationContext context,
+            String name,
+            String description,
+            List<MealPlanItem> items) {
+        if (context == null) {
+            return;
+        }
+        if (!context.getSubject().equals(subject)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The generation context does not match this member's meal.");
+        }
+        Set<String> restrictions = context.getRestrictions();
+        boolean restrictedMealText = violatesRestriction(name, restrictions)
+                || violatesRestriction(description, restrictions)
+                || items.stream().anyMatch(item -> violatesRestriction(item.getFoodName(), restrictions));
+        if (restrictedMealText) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The meal edit conflicts with a restriction saved for its generation.");
+        }
+    }
+
+    private boolean validGeneratedNutrition(NutritionEstimate nutrition) {
+        return nutrition != null && nutrition.calories() != null && nutrition.proteinGrams() != null
+                && nutrition.carbohydrateGrams() != null && nutrition.fatGrams() != null
+                && nutrition.fiberGrams() != null && nutrition.sodiumMg() != null
+                && isNonNegativeFinite(nutrition.calories())
+                && isNonNegativeFinite(nutrition.proteinGrams())
+                && isNonNegativeFinite(nutrition.carbohydrateGrams())
+                && isNonNegativeFinite(nutrition.fatGrams())
+                && isNonNegativeFinite(nutrition.fiberGrams())
+                && isNonNegativeFinite(nutrition.sodiumMg());
+    }
+
+    private record ValidatedGeneratedMeal(SaveGeneratedMealRequest meal, CreateFoodRequest food) {}
+
+    private boolean violatesRestriction(String text, Collection<String> restrictions) {
+        if (text == null || restrictions == null || restrictions.isEmpty()) {
+            return false;
+        }
+        Set<String> words = restrictionWords(text);
         return restrictions.stream()
-                .flatMap(value -> java.util.Arrays.stream(value.toLowerCase(Locale.ROOT)
-                        .replaceAll("[^a-z0-9]+", " ").trim().split("\\s+")))
+                .flatMap(value -> restrictionWords(value).stream())
                 .filter(value -> !List.of("allergy", "allergic", "intolerance", "intolerant",
                         "avoid", "avoidance", "free", "to", "and").contains(value))
-                .anyMatch(normalized::contains);
+                .anyMatch(restrictedWord -> words.stream()
+                        .anyMatch(word -> singularize(word).equals(singularize(restrictedWord))));
+    }
+
+    private Set<String> restrictionWords(String text) {
+        return new LinkedHashSet<>(List.of(text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ").trim().split("\\s+")));
+    }
+
+    private String singularize(String word) {
+        if (word.length() > 4 && word.endsWith("ies")) {
+            return word.substring(0, word.length() - 3) + "y";
+        }
+        if (word.length() > 3 && word.endsWith("s") && !word.endsWith("ss")) {
+            return word.substring(0, word.length() - 1);
+        }
+        return word;
     }
 
     private void validateFoodRequest(CreateFoodRequest request) {
@@ -507,6 +1227,40 @@ public class NutritionService {
         }
     }
 
+    private void validateHydrationRequest(HydrationRequest request) {
+        if (request == null || request.waterMl() == null
+                || request.waterMl() < 1
+                || request.waterMl() > MAX_SINGLE_WATER_LOG_ML) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A water amount from 1 to 2,000 mL is required.");
+        }
+        if (request.consumedAt() == null) return;
+        Instant now = Instant.now();
+        if (request.consumedAt().isBefore(now.minus(Duration.ofDays(365L * 5)))
+                || request.consumedAt().isAfter(now.plus(5, ChronoUnit.MINUTES))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Hydration timestamps must be within the past five years and no more than five minutes in the future.");
+        }
+    }
+
+    private void validateDailyHydrationLimit(
+            String subject, Instant consumedAt, int waterMl, HydrationLog existing) {
+        LocalDate date = consumedAt.atZone(ZoneOffset.UTC).toLocalDate();
+        Instant from = date.atStartOfDay().toInstant(ZoneOffset.UTC);
+        Instant to = date.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        int existingTotal = hydrationLogRepository
+                .findBySubjectAndConsumedAtGreaterThanEqualAndConsumedAtLessThanOrderByConsumedAtAsc(
+                        subject, from, to)
+                .stream().mapToInt(HydrationLog::getWaterMl).sum();
+        if (existing != null && existing.getConsumedAt().atZone(ZoneOffset.UTC).toLocalDate().equals(date)) {
+            existingTotal -= existing.getWaterMl();
+        }
+        if ((long) existingTotal + waterMl > MAX_DAILY_WATER_LOG_ML) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Daily drinking-water logs cannot exceed 10,000 mL.");
+        }
+    }
+
     private void validateProfileRequest(NutritionProfileRequest request) {
         if (request == null || isBlank(request.profileName()) || isBlank(request.goal())
                 || isBlank(request.dietaryPreference()) || isBlank(request.activityLevel())) {
@@ -517,13 +1271,103 @@ public class NutritionService {
                 || request.dietaryPreference().length() > 80 || request.activityLevel().length() > 80) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nutrition profile text fields exceed their maximum length.");
         }
-        if ((request.age() != null && request.age() <= 0)
+        if ((request.age() != null && (request.age() <= 0 || request.age() > 120))
                 || (request.heightCm() != null && !isPositiveFinite(request.heightCm()))
                 || (request.weightKg() != null && !isPositiveFinite(request.weightKg()))
-                || (request.targetCalories() != null && request.targetCalories() <= 0)) {
+                || (request.targetCalories() != null && request.targetCalories() <= 0)
+                || (request.targetWeightKg() != null
+                    && (!isPositiveFinite(request.targetWeightKg()) || request.targetWeightKg() > 500))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Age, height, weight, and target calories must be positive when provided.");
+                    "Age, height, current/target weight, and target calories must be within supported positive ranges.");
         }
+        if (request.calorieTargetMode() == NutritionProfile.CalorieTargetMode.MANUAL
+                && request.targetCalories() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A positive targetCalories value is required for a manual calorie target.");
+        }
+        if (request.targetDate() != null && request.targetWeightKg() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A desired target date requires a saved target weight.");
+        }
+        if (request.budgetPreference() != null
+                && !Set.of("LOW", "MODERATE", "FLEXIBLE").contains(request.budgetPreference())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Budget preference must be LOW, MODERATE, or FLEXIBLE.");
+        }
+        if (request.maxPreparationMinutes() != null
+                && (request.maxPreparationMinutes() < 5 || request.maxPreparationMinutes() > 240)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Preparation time must be between 5 and 240 minutes.");
+        }
+        if (request.cookingPreference() != null && request.cookingPreference().length() > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cooking preferences must be at most 500 characters.");
+        }
+        normalizeProfilePreferences(request.allergies(), "allergies");
+        normalizeProfilePreferences(request.intolerances(), "intolerances");
+        normalizeProfilePreferences(request.dislikedFoods(), "disliked foods");
+        normalizeProfilePreferences(request.preferredIngredients(), "preferred ingredients");
+    }
+
+    private void validateGoalTarget(Double targetWeightKg, LocalDate targetDate,
+                                    Double currentWeightKg, Double heightCm, Integer age, String goal) {
+        if (targetWeightKg == null) {
+            if (targetDate != null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A desired target date requires a saved target weight.");
+            }
+            return;
+        }
+        if (age == null || age < 18) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Target-weight validation and adult BMI screening are not supported for minors.");
+        }
+        if (heightCm == null || !isPositiveFinite(heightCm)
+                || heightCm > 300 || currentWeightKg == null
+                || !isPositiveFinite(currentWeightKg) || currentWeightKg > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A valid adult age, current weight, and height are required before saving a target weight.");
+        }
+        if (targetDate != null && !targetDate.isAfter(LocalDate.now(ZoneOffset.UTC))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The desired target date must be in the future.");
+        }
+        double targetBmi = targetWeightKg / Math.pow(heightCm / 100.0, 2);
+        if (!Double.isFinite(targetBmi) || targetBmi < 18.5) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "The target implies an adult BMI below 18.5. This BMI screening threshold is not a diagnosis; choose a different target or consult a qualified professional.");
+        }
+        String normalizedGoal = goal == null ? "" : goal.trim().toLowerCase(Locale.ROOT);
+        boolean supported = switch (normalizedGoal) {
+            case "weight loss" -> targetWeightKg < currentWeightKg;
+            case "muscle gain" -> targetWeightKg > currentWeightKg;
+            case "maintenance" -> Math.abs(targetWeightKg - currentWeightKg)
+                    <= Math.max(2.0, currentWeightKg * 0.05);
+            default -> false;
+        };
+        if (!supported) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Target weight must agree with a supported weight-loss, maintenance, or muscle-gain goal.");
+        }
+    }
+
+    private Set<String> normalizeProfilePreferences(List<String> values, String field) {
+        if (values == null) {
+            return Set.of();
+        }
+        if (values.size() > 20) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "At most twenty " + field + " may be saved.");
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String value : values) {
+            if (isBlank(value) || value.trim().length() > 100) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Each entry in " + field + " must contain 1 to 100 characters.");
+            }
+            normalized.add(value.trim());
+        }
+        return normalized;
     }
 
     private boolean isBlank(String value) {
@@ -558,7 +1402,14 @@ public class NutritionService {
 
     public record NutritionProfileRequest(String profileName, String goal, String dietaryPreference,
                                          String activityLevel, Integer age, Double heightCm,
-                                         Double weightKg, Integer targetCalories) {}
+                                         Double weightKg, Integer targetCalories,
+                                         NutritionProfile.CalorieTargetMode calorieTargetMode,
+                                         NutritionProfile.EnergyEquationSex energyEquationSex,
+                                         Double targetWeightKg, LocalDate targetDate,
+                                         List<String> allergies, List<String> intolerances,
+                                         List<String> dislikedFoods, List<String> preferredIngredients,
+                                         String budgetPreference, Integer maxPreparationMinutes,
+                                         String cookingPreference) {}
 
     public record NutritionCalculationResult(double calories, double proteinGrams,
                                             double carbohydrateGrams, double fatGrams,
@@ -604,6 +1455,23 @@ public class NutritionService {
 
     public record BmiResult(double bmi, String note) {}
 
+    public record GoalTimelineResult(boolean available, Long minimumWeeks, Long maximumWeeks,
+                                     LocalDate earliestEstimatedDate, LocalDate latestEstimatedDate,
+                                     LocalDate requestedDate, String requestedDateStatus,
+                                     String note, String assumptions) {
+        private static GoalTimelineResult unavailable(LocalDate requestedDate, String note) {
+            return new GoalTimelineResult(false, null, null, null, null, requestedDate,
+                    "UNAVAILABLE", note, "No suitable deterministic calculation is available for this goal.");
+        }
+    }
+
+    public record HydrationRequest(Instant consumedAt, Integer waterMl) {}
+
+    public record HydrationLogView(Long id, Instant consumedAt, int waterMl) {}
+
+    public record HydrationView(LocalDate date, int consumedMl, int targetMl,
+                                List<HydrationLogView> logs, String targetAssumptions) {}
+
     public record MacroTargetResult(int calorieTarget, double proteinGrams, double carbohydrateGrams,
                                     double fatGrams, double estimatedCalories, String method) {}
 
@@ -615,22 +1483,33 @@ public class NutritionService {
 
     public record EnergyEstimateResult(boolean available, Double bmrCaloriesPerDay,
                                        Double tdeeCaloriesPerDay, String goalCategory,
-                                       Double activityFactor, String note) {}
+                                       Double activityFactor, Integer goalAdjustedCalories,
+                                       String note) {}
 
     public record AiMealRequest(String goal, Integer targetCalories, String dietStyle,
-                               List<String> restrictions) {}
+                                List<String> restrictions, List<String> dislikedFoods,
+                                List<String> preferredIngredients, String budgetPreference,
+                                Integer maxPreparationMinutes, String cookingPreference) {
+        public AiMealRequest(String goal, Integer targetCalories, String dietStyle, List<String> restrictions) {
+            this(goal, targetCalories, dietStyle, restrictions, List.of(), List.of(), null, null, null);
+        }
+    }
 
     public record GeneratedFood(String name, Double servings, Long foodId) {}
 
     public record NutritionEstimate(Double calories, Double proteinGrams,
-                                    Double carbohydrateGrams, Double fatGrams) {
+                                    Double carbohydrateGrams, Double fatGrams,
+                                    Double fiberGrams, Double sodiumMg) {
         public NutritionEstimate add(NutritionEstimate other, double servings) {
             NutritionEstimate total = new NutritionEstimate(calories + other.calories * servings,
                     proteinGrams + other.proteinGrams * servings,
                     carbohydrateGrams + other.carbohydrateGrams * servings,
-                    fatGrams + other.fatGrams * servings);
+                    fatGrams + other.fatGrams * servings,
+                    fiberGrams + other.fiberGrams * servings,
+                    sodiumMg + other.sodiumMg * servings);
             if (!isEstimateValue(total.calories()) || !isEstimateValue(total.proteinGrams())
-                    || !isEstimateValue(total.carbohydrateGrams()) || !isEstimateValue(total.fatGrams())) {
+                    || !isEstimateValue(total.carbohydrateGrams()) || !isEstimateValue(total.fatGrams())
+                    || !isEstimateValue(total.fiberGrams()) || !isEstimateValue(total.sodiumMg())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Generated nutrition totals exceed supported numeric limits.");
             }
@@ -642,7 +1521,8 @@ public class NutritionService {
         }
     }
 
-    public record GeneratedMeal(String name, MealPlan.MealType mealType, List<GeneratedFood> foods,
+    public record GeneratedMeal(String name, MealPlan.MealType mealType, Integer servingSizeGrams,
+                                List<GeneratedFood> foods,
                                 String preparationInstructions, NutritionEstimate estimatedNutrition,
                                 String nutritionSource) {}
 
@@ -651,12 +1531,18 @@ public class NutritionService {
                                     List<String> alternatives) {}
 
     public record MealPlanSuggestion(boolean available, String status,
-                                     GeneratedMealPlan plan, String note) {}
+                                     GeneratedMealPlan plan, String note,
+                                     String generationContextId) {
+        public MealPlanSuggestion(boolean available, String status, GeneratedMealPlan plan, String note) {
+            this(available, status, plan, note, null);
+        }
+    }
 
-    public record SaveGeneratedMealPlanRequest(String planName, String goal, List<String> restrictions,
+    public record SaveGeneratedMealPlanRequest(String generationContextId, String planName, String goal,
+                                               List<String> restrictions,
                                                List<SaveGeneratedMealRequest> meals) {}
 
     public record SaveGeneratedMealRequest(String name, MealPlan.MealType mealType,
-                                           String preparationInstructions,
-                                           List<MealPlanItemRequest> foods) {}
+                                           Integer servingSizeGrams, String preparationInstructions,
+                                           List<GeneratedFood> ingredients, NutritionEstimate estimatedNutrition) {}
 }

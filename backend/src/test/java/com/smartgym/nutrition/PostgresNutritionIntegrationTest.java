@@ -13,11 +13,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -38,6 +40,12 @@ class PostgresNutritionIntegrationTest {
     private MealPlanRepository mealPlanRepository;
 
     @Autowired
+    private NutritionPlanRepository nutritionPlanRepository;
+
+    @Autowired
+    private MealPlanGenerationContextRepository generationContextRepository;
+
+    @Autowired
     private FoodJournalRepository foodJournalRepository;
 
     @Autowired
@@ -45,6 +53,9 @@ class PostgresNutritionIntegrationTest {
 
     @Autowired
     private NutritionProfileRepository nutritionProfileRepository;
+
+    @Autowired
+    private HydrationLogRepository hydrationLogRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -67,9 +78,12 @@ class PostgresNutritionIntegrationTest {
 
     @BeforeEach
     void clearOnlyIntegrationTestRows() {
+        nutritionPlanRepository.deleteAll();
         mealPlanRepository.deleteAll();
+        generationContextRepository.deleteAll();
         foodJournalRepository.deleteAll();
         bodyMeasurementRepository.deleteAll();
+        hydrationLogRepository.deleteAll();
         nutritionProfileRepository.deleteAll();
         foodRepository.deleteAll();
     }
@@ -83,9 +97,15 @@ class PostgresNutritionIntegrationTest {
                 where table_schema = 'public'
                   and table_name in ('nutrition_foods', 'nutrition_meal_plans',
                       'nutrition_meal_plan_items', 'nutrition_food_journal',
-                      'nutrition_body_measurements', 'nutrition_profiles')
+                      'nutrition_body_measurements', 'nutrition_profiles',
+                      'nutrition_plans', 'nutrition_plan_days', 'nutrition_plan_meals',
+                      'nutrition_plan_meal_items', 'nutrition_profile_allergies',
+                      'nutrition_profile_intolerances', 'nutrition_profile_disliked_foods',
+                      'nutrition_profile_preferred_ingredients', 'nutrition_hydration_logs')
                 """, Integer.class);
-        assertEquals(6, tables);
+        assertEquals(15, tables);
+        assertTrue(java.util.Arrays.stream(flyway.info().applied())
+                .anyMatch(migration -> migration.getVersion().getVersion().equals("5")));
     }
 
     @Test
@@ -159,6 +179,64 @@ class PostgresNutritionIntegrationTest {
         nutritionProfileRepository.deleteById(profile.getId());
         assertFalse(foodRepository.findById(food.getId()).isPresent());
         assertFalse(nutritionProfileRepository.findById(profile.getId()).isPresent());
+    }
+
+    @Test
+    void profileTargetsPreferencesAndHydrationLogsPersistThroughPostgres() {
+        NutritionProfile profile = new NutritionProfile(SUBJECT, "Profile", "weight loss",
+                "balanced", "light", 30, 170.0, 70.0, 2000);
+        profile.update("Profile", "weight loss", "balanced", "light", 30, 170.0, 70.0, 2000,
+                NutritionProfile.CalorieTargetMode.MANUAL, null, 65.0,
+                LocalDate.of(2027, 10, 25), "LOW", 25, "Batch cooking",
+                Set.of("peanuts"), Set.of("lactose"), Set.of("olives"), Set.of("lentils"));
+        NutritionProfile savedProfile = nutritionProfileRepository.saveAndFlush(profile);
+        NutritionProfile loadedProfile = nutritionProfileRepository
+                .findFirstBySubjectOrderByCreatedAtDesc(SUBJECT).orElseThrow();
+        assertEquals(65.0, loadedProfile.getTargetWeightKg());
+        assertEquals(LocalDate.of(2027, 10, 25), loadedProfile.getTargetDate());
+        assertEquals(Set.of("peanuts"), loadedProfile.getAllergies());
+        assertEquals(Set.of("lactose"), loadedProfile.getIntolerances());
+        assertEquals(Set.of("olives"), loadedProfile.getDislikedFoods());
+        assertEquals(Set.of("lentils"), loadedProfile.getPreferredIngredients());
+        assertEquals("LOW", loadedProfile.getBudgetPreference());
+        assertEquals(25, loadedProfile.getMaxPreparationMinutes());
+        assertEquals("Batch cooking", loadedProfile.getCookingPreference());
+
+        HydrationLog log = hydrationLogRepository.saveAndFlush(
+                new HydrationLog(SUBJECT, java.time.Instant.now().minusSeconds(600), 350));
+        HydrationLog loadedLog = hydrationLogRepository.findByIdAndSubject(log.getId(), SUBJECT).orElseThrow();
+        assertEquals(350, loadedLog.getWaterMl());
+        loadedLog.correct(loadedLog.getConsumedAt(), 500);
+        hydrationLogRepository.saveAndFlush(loadedLog);
+        assertEquals(500, hydrationLogRepository.findByIdAndSubject(log.getId(), SUBJECT)
+                .orElseThrow().getWaterMl());
+        nutritionProfileRepository.delete(savedProfile);
+        assertTrue(hydrationLogRepository.findByIdAndSubject(log.getId(), SUBJECT).isPresent());
+    }
+
+    @Test
+    @Transactional
+    void persistentPlanMigrationStoresDatedMealsAndItsGenerationContext() {
+        MealPlanGenerationContext context = generationContextRepository.saveAndFlush(
+                new MealPlanGenerationContext(SUBJECT, List.of("pork", "peanuts")));
+        NutritionPlan plan = new NutritionPlan(SUBJECT, "Weekly nutrition plan", "maintenance",
+                NutritionPlan.PlanType.WEEKLY, LocalDate.of(2026, 10, 25), context);
+        NutritionPlanDay day = new NutritionPlanDay(LocalDate.of(2026, 10, 25));
+        day.addMeal(new NutritionPlanMeal("Oat breakfast", MealPlan.MealType.BREAKFAST, 350,
+                "Cook the oats.", new NutritionService.NutritionEstimate(340.0, 12.0, 52.0,
+                        8.0, 6.0, 120.0),
+                "MODEL_ESTIMATE", List.of(new NutritionPlanMeal.NutritionPlanMealItem(
+                        null, "Oats", 1.0))));
+        plan.addDay(day);
+        NutritionPlan stored = nutritionPlanRepository.saveAndFlush(plan);
+
+        NutritionPlan reloaded = nutritionPlanRepository.findByIdAndSubject(stored.getId(), SUBJECT).orElseThrow();
+        assertEquals(NutritionPlan.PlanType.WEEKLY, reloaded.getPlanType());
+        assertEquals(LocalDate.of(2026, 10, 31), reloaded.getEndDate());
+        assertEquals(LocalDate.of(2026, 10, 25), reloaded.getDays().getFirst().getPlanDate());
+        assertEquals("Oats", reloaded.getDays().getFirst().getMeals().getFirst()
+                .getFoods().getFirst().getFoodName());
+        assertEquals(Set.of("pork", "peanuts"), reloaded.getGenerationContext().getRestrictions());
     }
 
     @Test

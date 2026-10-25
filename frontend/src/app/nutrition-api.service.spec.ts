@@ -8,7 +8,8 @@ import {
   NutritionFood,
   NutritionJournalEntry,
   NutritionProfile,
-  SaveGeneratedMealPlan
+  SaveGeneratedMealPlan,
+  SaveNutritionPlan
 } from './nutrition-api.service';
 
 describe('NutritionApiService', () => {
@@ -162,24 +163,129 @@ describe('NutritionApiService', () => {
     });
   });
 
+  it('requests the deterministic goal timeline and hydration history and persists corrections', () => {
+    service.calculateGoalTimeline().subscribe((result) => {
+      expect(result.available).toBeTrue();
+      expect(result.minimumWeeks).toBe(20);
+    });
+    http.expectOne('/api/nutrition/calculations/goal-timeline').flush({
+      available: true, minimumWeeks: 20, maximumWeeks: 40,
+      earliestEstimatedDate: '2027-03-14', latestEstimatedDate: '2027-08-01',
+      requestedDate: null, requestedDateStatus: 'NOT_SET', note: 'Approximate',
+      assumptions: '0.25–0.5 kg/week'
+    });
+
+    service.getHydrationDay('2026-10-25').subscribe((day) => expect(day.consumedMl).toBe(250));
+    const daily = http.expectOne('/api/nutrition/hydration?date=2026-10-25');
+    expect(daily.request.method).toBe('GET');
+    daily.flush({ date: '2026-10-25', consumedMl: 250, targetMl: 2000, logs: [], targetAssumptions: 'General estimate' });
+
+    service.getHydrationHistory('2026-10-01', '2026-10-25').subscribe((logs) => expect(logs.length).toBe(1));
+    const history = http.expectOne('/api/nutrition/hydration/history?from=2026-10-01&to=2026-10-25');
+    expect(history.request.method).toBe('GET');
+    history.flush([{ id: 8, consumedAt: '2026-10-25T12:00:00Z', waterMl: 250 }]);
+
+    service.addHydrationLog({ waterMl: 300 }).subscribe();
+    const create = http.expectOne('/api/nutrition/hydration');
+    expect(create.request.method).toBe('POST');
+    expect(create.request.body).toEqual({ waterMl: 300 });
+    create.flush({ date: '2026-10-25', consumedMl: 550, targetMl: 2000, logs: [], targetAssumptions: '' });
+
+    service.correctHydrationLog(8, { consumedAt: '2026-10-25T12:00:00Z', waterMl: 400 }).subscribe();
+    const correct = http.expectOne('/api/nutrition/hydration/8');
+    expect(correct.request.method).toBe('PUT');
+    expect(correct.request.body.waterMl).toBe(400);
+    correct.flush({ date: '2026-10-25', consumedMl: 400, targetMl: 2000, logs: [], targetAssumptions: '' });
+
+    service.deleteHydrationLog(8).subscribe();
+    http.expectOne({ method: 'DELETE', url: '/api/nutrition/hydration/8' }).flush(null);
+  });
+
   it('generates and saves a reviewed meal plan using the assistant routes', () => {
     const restrictions = { restrictions: ['peanuts', 'shellfish'] };
     service.generatePlan(restrictions).subscribe();
     const generate = http.expectOne('/api/nutrition/assistant/plan');
     expect(generate.request.method).toBe('POST');
     expect(generate.request.body).toEqual(restrictions);
-    generate.flush({ available: false, status: 'UNAVAILABLE', plan: null, note: 'Not configured' });
+    generate.flush({
+      available: false, status: 'UNAVAILABLE', plan: null, note: 'Not configured',
+      generationContextId: null
+    });
 
     const payload: SaveGeneratedMealPlan = {
-      planName: 'Plan', goal: 'maintenance', restrictions: ['peanuts'],
-      meals: [{ name: 'Breakfast', mealType: 'BREAKFAST', preparationInstructions: 'Prepare',
-        foods: [{ foodId: 3, servings: 1 }] }]
+      planName: 'Plan', goal: 'maintenance',
+      generationContextId: '01234567-89ab-cdef-0123-456789abcdef',
+      meals: [{
+        name: 'Breakfast', mealType: 'BREAKFAST', servingSizeGrams: 350,
+        preparationInstructions: 'Prepare', ingredients: [{ name: 'Oats', servings: 50 }],
+        estimatedNutrition: {
+          calories: 340, proteinGrams: 12, carbohydrateGrams: 52,
+          fatGrams: 8, fiberGrams: 6, sodiumMg: 120
+        }
+      }]
     };
     service.saveGeneratedPlan(payload).subscribe();
     const save = http.expectOne('/api/nutrition/assistant/plan/save');
     expect(save.request.method).toBe('POST');
     expect(save.request.body).toEqual(payload);
     save.flush([]);
+  });
+
+  it('generates dated daily or weekly drafts and persists/retrieves plans', () => {
+    const request = {
+      planType: 'WEEKLY' as const,
+      startDate: '2026-10-25',
+      restrictions: ['peanuts']
+    };
+    service.generatePersistentPlan(request).subscribe();
+    const generate = http.expectOne('/api/nutrition/assistant/plans/draft');
+    expect(generate.request.method).toBe('POST');
+    expect(generate.request.body).toEqual(request);
+    generate.flush({
+      available: true, status: 'AI_GENERATED', note: 'Review this draft.',
+      generationContextId: 'context', planType: 'WEEKLY', startDate: request.startDate,
+      planName: 'Week', goal: 'maintenance', plan: null, days: []
+    });
+
+    const payload: SaveNutritionPlan = {
+      generationContextId: 'context',
+      planType: 'WEEKLY',
+      startDate: request.startDate,
+      planName: 'Week',
+      goal: 'maintenance',
+      days: []
+    };
+    service.savePersistentPlan(payload).subscribe();
+    const save = http.expectOne('/api/nutrition/plans');
+    expect(save.request.method).toBe('POST');
+    expect(save.request.body).toEqual(payload);
+    save.flush({ id: 4, name: 'Week', goal: 'maintenance', planType: 'WEEKLY',
+      startDate: request.startDate, endDate: '2026-10-31', version: 0, days: [] });
+
+    service.getNutritionPlans().subscribe((plans) => expect(plans).toHaveSize(1));
+    http.expectOne({ method: 'GET', url: '/api/nutrition/plans' }).flush([{
+      id: 4, name: 'Week', goal: 'maintenance', planType: 'WEEKLY',
+      startDate: request.startDate, endDate: '2026-10-31', version: 0, days: []
+    }]);
+    service.getNutritionPlan(4).subscribe();
+    http.expectOne({ method: 'GET', url: '/api/nutrition/plans/4' }).flush({
+      id: 4, name: 'Week', goal: 'maintenance', planType: 'WEEKLY',
+      startDate: request.startDate, endDate: '2026-10-31', version: 0, days: []
+    });
+  });
+
+  it('sends plan versions when regenerating a day or replacing one meal', () => {
+    service.regeneratePlanDay(4, '2026-10-27', 3).subscribe();
+    const regenerate = http.expectOne('/api/nutrition/plans/4/days/2026-10-27/regenerate');
+    expect(regenerate.request.method).toBe('POST');
+    expect(regenerate.request.body).toEqual({ expectedVersion: 3 });
+    regenerate.flush({});
+
+    service.replacePlanMeal(4, 11, 4).subscribe();
+    const replace = http.expectOne('/api/nutrition/plans/4/meals/11/replace');
+    expect(replace.request.method).toBe('POST');
+    expect(replace.request.body).toEqual({ expectedVersion: 4 });
+    replace.flush({});
   });
 
   it('propagates HTTP status codes and network errors without remapping them', () => {
