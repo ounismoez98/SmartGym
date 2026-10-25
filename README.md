@@ -1,8 +1,9 @@
 # Smart Gym
 
-Smart Gym is a gym-management platform. This repository currently delivers the
-first runnable security vertical slice: Angular sign-in through Keycloak,
-an authenticated dashboard, and the Spring Boot membership identity API.
+Smart Gym is a gym-management platform. This repository delivers the M1
+membership service: Keycloak-backed Angular sign-in, membership management,
+subscriptions, payments, staff and coach assignments, RabbitMQ events, and
+the administrative assistant. Other business modules remain placeholders.
 
 ## Development ownership
 
@@ -29,6 +30,7 @@ The local HTTP configuration is for development only:
 | Keycloak | `http://localhost:8180` |
 | Realm | `gym` |
 | Business API | `http://localhost:8088/api/...` (proxied by Nginx) |
+| OpenAPI JSON | `http://localhost:8081/v3/api-docs` |
 | RabbitMQ management | `http://localhost:15672` |
 | Groq chat completions API | `https://api.groq.com/openai/v1/chat/completions` |
 
@@ -164,8 +166,11 @@ profile and does not start by default:
 docker compose --profile local-llm up --build -d
 ```
 
-The API currently does not call either Groq or Ollama; the LLM client and
-assistant are planned for a later implementation step.
+The administrative assistant uses the configured OpenAI-compatible Groq API
+through the backend-only `LlmClient`. The optional Ollama container is retained
+for local experimentation; enabling its Compose profile does not redirect the
+API automatically. Set `LLM_BASE_URL` and `LLM_MODEL` explicitly if using a
+different endpoint.
 
 Data sent to the LLM provider is limited to minimal, non-identifying facts.
 The PFE specification asks for a local LLM; confirm this choice with the
@@ -174,9 +179,9 @@ supervisor.
 Open `http://localhost:8088` and select **Sign in**.
 
 Keycloak credential validation and invalid-credential messages stay on the
-Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
-is not configured; password-recovery email is intentionally disabled and is
-not operational.
+Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme.
+MailHog is configured as the local SMTP sink for assistant reminders;
+password-recovery email is intentionally disabled and is not operational.
 
 The Compose stack routes `/api/membership`, `/api/courses`, `/api/training`,
 and `/api/nutrition` to the secured business API while preserving the full
@@ -312,20 +317,22 @@ record. These roles can overlap.
 
 ## Login acceptance status
 
-`MembershipControllerTest` is the current automated API test class. It uses
-MockMvc, simulated JWTs, and H2; it does not verify live Keycloak signatures
-or browser flows. Browser and Compose checks are not re-verified.
+Backend API tests use MockMvc, simulated JWTs, and H2; they do not verify live
+Keycloak signatures or browser flows. In this session, Docker Compose services
+were running, the frontend returned HTTP 200, and the API OpenAPI document
+returned HTTP 200 with 29 documented paths. No interactive browser login or
+full Playwright flow was executed.
 
 | Acceptance item | Covered by automated test | Browser/Compose check |
 | --- | --- | --- |
-| Compose starts the core platform | No | not re-verified |
-| Angular loads in a browser | No | not re-verified |
+| Compose starts the core platform | No | Yes — services running in this session |
+| Angular loads in a browser | No | Not verified in a browser (HTTP root returned 200) |
 | Sign-in opens the Keycloak login page; valid and invalid credentials behave as expected | No | not re-verified |
 | Dashboard displays the authenticated identity and membership API response | No | not re-verified |
 | Angular calls `GET /api/membership/me` with an access token | No | not re-verified |
 | Role-aware navigation, protected routes, and reload behavior | No | not re-verified |
-| Missing/malformed token returns `401`; role and ownership denials return `403` | Yes — `MembershipControllerTest` | not re-verified |
-| Member A cannot read another member's private record | Yes — `MembershipControllerTest` | not re-verified |
+| Missing/malformed token returns `401`; role and ownership denials return `403` | Yes — MockMvc tests | not re-verified live |
+| Member A cannot read another member's private record | Yes — MockMvc tests | E2E prepared, not run |
 | Logout ends the application session and protected content is inaccessible | No | not re-verified |
 
 - [ ] Expired sessions recover without a redirect loop (not tested).
@@ -344,6 +351,7 @@ The following are not yet delivered:
 
 - Application RabbitMQ consumers.
 - SMTP password recovery and production HTTPS.
+- Business features for modules M2-M4.
 
 Flyway manages the PostgreSQL schema, and Hibernate uses `ddl-auto: validate`.
 Development sample plans and policies are loaded only by the `dev` profile.
@@ -352,10 +360,14 @@ run after the development seed migration, allowing existing local volumes to
 receive migrations added after their initial seed.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
-payment deletion-guard tests. Testcontainers cases are skipped when Docker
-is unavailable. Angular unit tests cover membership API requests and route
-guards. A Playwright E2E scenario covers the admin membership workflow,
-MailHog confirmation, and member ownership denial.
+payment deletion-guard tests. The latest Maven run passed 96 tests with 0
+failures and 4 Testcontainers tests skipped. Angular unit tests passed 5 tests;
+the production build passed. The Playwright E2E scenario covers the admin
+membership workflow, MailHog confirmation, and member ownership denial. It
+was not executed beyond its credential precondition because local E2E login
+credentials were absent.
+The OpenAPI JSON document is publicly readable; the described API operations
+still require a valid bearer JWT and enforce their normal role/ownership rules.
 
 Run the backend tests from the `backend` directory:
 
@@ -394,7 +406,7 @@ Docker Desktop must be running for the Testcontainers PostgreSQL tests.
 Run the frontend checks from the repository root:
 
 ```powershell
-npm --prefix frontend test
+npm --prefix frontend run test -- --run
 npm --prefix frontend run build
 ```
 

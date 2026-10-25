@@ -22,3 +22,13 @@
 - RabbitMQ event delivery is best effort after database commit. The current
   implementation does not use an outbox or retry queue; broker failure is
   logged without failing the committed business operation.
+- The legacy `business_profiles` table is no longer queried by application
+  code. V1 copied its member and employee profile identifiers into the
+  module-owned tables, so V7 removes the obsolete table without changing the
+  existing migrations.
+- The development profile enables Flyway out-of-order execution only to let
+  persistent local volumes that already applied the V100 seed receive later
+  V4-V7 migrations. Production does not enable out-of-order migrations.
+- The OpenAPI JSON document is intentionally public for API discovery;
+  business endpoints remain protected by bearer JWT validation and
+  authorization.

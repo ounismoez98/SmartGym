@@ -44,6 +44,7 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(
                         org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs/**").permitAll()
                         .requestMatchers("/api/dev/provision").permitAll()
                         .requestMatchers("/api/membership/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
                         .requestMatchers("/api/courses/**").hasAnyRole("ADMIN", "COACH", "MEMBER")
