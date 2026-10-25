@@ -240,6 +240,7 @@
 
   <section *ngIf="activeTab === 'assistant' && isAdmin" class="workspace-section">
     <div class="section-heading"><div><p class="eyebrow">ADMINISTRATIVE ASSISTANT</p><h2>Policies & renewal reminders</h2></div></div>
+    <p class="muted">Do not enter personal data in assistant questions. Email addresses, phone numbers, and UUIDs are masked before the question is sent to the LLM provider.</p>
     <form [formGroup]="explainForm" (ngSubmit)="askAssistant()" class="account-card workspace-card">
       <h3>Explain plan conditions</h3>
       <div class="form-grid"><label>Plan (optional)<select formControlName="planId"><option value="">Validated policies only</option><option *ngFor="let plan of plans" [value]="plan.id">{{ plan.name }}</option></select></label>

@@ -14,6 +14,14 @@
   should be confirmed with the project supervisor because the original
   specification requests a local LLM. No real provider key is stored in the
   repository.
+- LLM prompts do not contain member names, emails, phone numbers, or UUIDs.
+  Reminder prompts use `{{FIRST_NAME}}`, which the API renders only after
+  validating the generated date and amount; a missing first name renders as
+  `Bonjour`. Free-form questions and policy/plan text are scanned for email
+  addresses, phone-like number sequences, and UUIDs and those patterns are
+  masked. Validated gym policies sent to the provider must remain general
+  policy text and must not include personal information; automated masking is
+  not a reliable detector for human names.
 - If a reminder cannot be validated against its subscription facts after the
   single retry, the system stores an editable `DRAFT` with `[À COMPLÉTER]`
   placeholders rather than sending unverified information.
