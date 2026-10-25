@@ -192,6 +192,7 @@ public class LocalLlmMealPlanAssistant {
                 : Map.of("type", "json_object");
         Map<String, Object> payload = Map.of(
                 "model", model,
+                "reasoning_effort", "low",
                 "max_completion_tokens", MAX_COMPLETION_TOKENS,
                 "messages", List.of(
                         Map.of("role", "system", "content",

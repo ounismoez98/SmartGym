@@ -87,6 +87,7 @@ class LocalLlmMealPlanAssistantTest {
                 .andExpect(header("Authorization", "Bearer " + TEST_API_KEY))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"model\":\"" + GROQ_MODEL + "\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"reasoning_effort\":\"low\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"max_completion_tokens\":8192")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"type\":\"json_schema\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"strict\":true")))
