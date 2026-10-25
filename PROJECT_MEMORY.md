@@ -11,7 +11,7 @@
 - Repository started empty (no prior application/commits); current branch is
   `main`. Initial runnable authentication vertical slice has been created.
 - Development stack was started and browser-smoke-tested at
-  `http://localhost:8088`; Keycloak is at `http://localhost:8080`.
+  `http://localhost:8088`; Keycloak is at `http://localhost:8180`.
 - Local secrets are in ignored `.env`; use `.env.example` as the template and
   never copy actual secret values into documentation or source control.
 
@@ -35,7 +35,7 @@
   Code + PKCE S256; in-memory adapter tokens; initialization before guards;
   silent SSO callback; same-origin allowlisted API-token interceptor; token
   refresh/expiry handling and `401`/`403` behavior.
-- `keycloak/realm-import/`: imported `smart-gym` realm, public SPA client
+- `keycloak/realm-import/`: imported `gym` realm, public `gym-frontend` SPA client
   without a secret, exact development redirect/logout/web-origin allowlists,
   explicit role/profile/subject/audience claims, and lightweight login theme.
   Password reset is disabled because SMTP is not configured.
@@ -55,6 +55,8 @@
   gym-coach, member-a, member-b via Keycloak Admin API, then business profiles
   and coach assignments via a dev-only, provisioning-key-protected API. No
   Keycloak database access.
+- `docker-compose.yml`: local PostgreSQL, Keycloak, RabbitMQ, Ollama, API,
+  and frontend services. RabbitMQ and Ollama data use named volumes.
 - `README.md`: startup instructions, development-only HTTP and account setup,
   production HTTPS guidance, ownership and acceptance status.
 
@@ -85,7 +87,7 @@
 - JWT/security/API: `backend/src/main/java/com/smartgym/membership/`
 - API access-control tests:
   `backend/src/test/java/com/smartgym/membership/api/MembershipControllerTest.java`
-- Realm/client/claims: `keycloak/realm-import/smart-gym-realm.json`
+- Realm/client/claims: `keycloak/realm-import/gym-realm.json`
 
 ## Next work — recommended order
 

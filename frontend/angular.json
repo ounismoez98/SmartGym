@@ -38,6 +38,15 @@
           "defaultConfiguration": "production"
         },
         "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "buildTarget": "smart-gym:build:development",
+            "tsConfig": "tsconfig.spec.json",
+            "runner": "vitest",
+            "watch": false
+          }
+        },
+        "test": {
           "builder": "@angular/build:karma",
           "options": {
             "tsConfig": "tsconfig.spec.json",

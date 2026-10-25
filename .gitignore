@@ -1,7 +1,10 @@
 .env
+.vscode/
 node_modules/
 dist/
 .angular/
 coverage/
 target/
 *.log
+frontend/test-results/
+frontend/playwright-report/

@@ -4,6 +4,7 @@ import { DashboardComponent } from './dashboard.component';
 import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
 import { FeedbackComponent } from './feedback.component';
+import { MembershipComponent } from './membership.component';
 import { MessagePageComponent } from './message-page.component';
 import { NutritionWorkspaceComponent } from './nutrition-workspace.component';
 import { CoachNutritionComponent } from './coach-nutrition.component';
@@ -16,13 +17,13 @@ export const appRoutes: Routes = [
   { path: 'dashboard', component: DashboardComponent, canActivate: [authGuard] },
   {
     path: 'membership',
-    component: ModuleComponent,
+    component: MembershipComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Membership', module: 'M1', description: 'Your membership, reservations, and assigned-member access.', roles: moduleRoles }
   },
   {
     path: 'courses',
-    component: ModuleComponent,
+    component: MembershipComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Courses', module: 'M2', description: 'Explore gym courses and class schedules.', roles: moduleRoles }
   },

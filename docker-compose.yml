@@ -41,9 +41,9 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
-      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME: http://localhost:8180
     ports:
-      - "8080:8080"
+      - "8180:8080"
     volumes:
       - ./keycloak/themes:/opt/keycloak/themes:ro
       - ./keycloak/realm-import:/opt/keycloak/data/import:ro
@@ -57,6 +57,42 @@ services:
       retries: 30
       start_period: 30s
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  ollama:
+    image: ollama/ollama:0.12.6
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   api:
     build:
       context: ./backend
@@ -65,10 +101,24 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/smartgym
       SPRING_DATASOURCE_USERNAME: smartgym
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set local secrets}
-      APP_SECURITY_ISSUER_URI: http://localhost:8080/realms/smart-gym
-      APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/smart-gym/protocol/openid-connect/certs
+      APP_SECURITY_ISSUER_URI: http://localhost:8180/realms/gym
+      APP_SECURITY_JWK_SET_URI: http://keycloak:8080/realms/gym/protocol/openid-connect/certs
       APP_PROVISIONING_TOKEN: ${PROVISIONING_TOKEN:?Set PROVISIONING_TOKEN in .env}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-qwen-2.5-32b}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      SPRING_MAIL_HOST: mailhog
+      SPRING_MAIL_PORT: 1025
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "false"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "false"
+      APP_MAIL_FROM: no-reply@smartgym.local
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
+      LLM_API_KEY: ${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
       APP_LLM_CONNECT_TIMEOUT: ${APP_LLM_CONNECT_TIMEOUT:-5s}
       APP_LLM_READ_TIMEOUT: ${APP_LLM_READ_TIMEOUT:-120s}
@@ -79,6 +129,10 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
 
   frontend:
     build:
@@ -91,3 +145,5 @@ services:
 volumes:
   smartgym-db:
   keycloak-db:
+  rabbitmq-data:
+  ollama-data:

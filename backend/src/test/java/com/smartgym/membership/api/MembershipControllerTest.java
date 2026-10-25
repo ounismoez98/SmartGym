@@ -4,21 +4,26 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignment;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -38,7 +43,10 @@ class MembershipControllerTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private BusinessProfileRepository profileRepository;
+    private MemberRepository memberRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
 
     @Autowired
     private CoachAssignmentRepository assignmentRepository;
@@ -46,19 +54,17 @@ class MembershipControllerTest {
     @BeforeEach
     void setUp() {
         assignmentRepository.deleteAll();
-        profileRepository.deleteAll();
-        BusinessProfile memberA = new BusinessProfile(MEMBER_A_SUBJECT, "member-a", "Member A");
-        memberA.ensureMemberProfile();
-        memberAId = memberA.getMemberProfileId();
-        BusinessProfile memberB = new BusinessProfile(MEMBER_B_SUBJECT, "member-b", "Member B");
-        memberB.ensureMemberProfile();
-        memberBId = memberB.getMemberProfileId();
-        BusinessProfile memberC = new BusinessProfile(MEMBER_C_SUBJECT, "member-c", "Member C");
-        memberC.ensureMemberProfile();
-        memberCId = memberC.getMemberProfileId();
-        BusinessProfile coach = new BusinessProfile(COACH_SUBJECT, "gym-coach", "Gym Coach");
-        coach.ensureEmployeeProfile();
-        profileRepository.saveAll(List.of(memberA, memberB, memberC, coach));
+        memberRepository.deleteAll();
+        employeeRepository.deleteAll();
+        Member memberA = new Member(UUID.randomUUID(), MEMBER_A_SUBJECT, "member-a", "Member A");
+        Member memberB = new Member(UUID.randomUUID(), MEMBER_B_SUBJECT, "member-b", "Member B");
+        Member memberC = new Member(UUID.randomUUID(), MEMBER_C_SUBJECT, "member-c", "Member C");
+        memberAId = memberA.getId();
+        memberBId = memberB.getId();
+        memberCId = memberC.getId();
+        memberRepository.saveAll(List.of(memberA, memberB, memberC));
+        employeeRepository.save(new Employee(UUID.randomUUID(), COACH_SUBJECT, "gym-coach", "Gym Coach"));
+        employeeRepository.save(new Employee(UUID.randomUUID(), "gym-admin", "gym-admin", "Gym Administrator"));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_A_SUBJECT));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_B_SUBJECT));
     }
@@ -70,6 +76,15 @@ class MembershipControllerTest {
     }
 
     @Test
+    void unauthenticatedResponsesUseUniformJson() throws Exception {
+        mockMvc.perform(get("/api/membership/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.details").isMap());
+    }
+
+    @Test
     void malformedTokenReturnsUnauthorized() throws Exception {
         mockMvc.perform(get("/api/membership/me").header("Authorization", "Bearer invalid-token"))
                 .andExpect(status().isUnauthorized());
@@ -78,10 +93,7 @@ class MembershipControllerTest {
     @Test
     void identityIncludesValidatedSubjectRolesAndBusinessProfile() throws Exception {
         mockMvc.perform(get("/api/membership/me")
-                        .with(jwt().jwt(token -> token
-                                .subject(MEMBER_A_SUBJECT)
-                                .claim("name", "Member A")
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER", "UNRELATED"))))))
+                        .with(roleJwtWithDisplayName(MEMBER_A_SUBJECT, "Member A", "MEMBER", "UNRELATED")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.subject").value(MEMBER_A_SUBJECT))
                 .andExpect(jsonPath("$.displayName").value("Member A"))
@@ -95,92 +107,203 @@ class MembershipControllerTest {
     @Test
     void authenticatedIdentityWithoutBusinessProfileNeedsOnboarding() throws Exception {
         mockMvc.perform(get("/api/membership/me")
-                        .with(jwt().jwt(token -> token
-                                .subject("not-provisioned")
-                                .claim("name", "New member")
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
+                        .with(roleJwtWithDisplayName("not-provisioned", "New member", "MEMBER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.memberProfileId").doesNotExist())
                 .andExpect(jsonPath("$.employeeProfileId").doesNotExist())
                 .andExpect(jsonPath("$.profileStatus").value("ONBOARDING_REQUIRED"))
                 .andExpect(jsonPath("$.onboardingRequired").value(true));
-        org.assertj.core.api.Assertions.assertThat(profileRepository.findById("not-provisioned")).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(memberRepository.findByKeycloakUserId("not-provisioned")).isEmpty();
     }
 
     @Test
     void memberCanReadOwnPrivateRecordButNotAnotherMembers() throws Exception {
         mockMvc.perform(get("/api/membership/members/{id}/private", memberAId)
-                        .with(jwt().jwt(token -> token.subject(MEMBER_A_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
+                        .with(roleJwt(MEMBER_A_SUBJECT, "MEMBER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.memberDisplayName").value("Member A"));
 
         mockMvc.perform(get("/api/membership/members/{id}/private", memberBId)
-                        .with(jwt().jwt(token -> token.subject(MEMBER_A_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
+                        .with(roleJwt(MEMBER_A_SUBJECT, "MEMBER")))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void coachCanReadOnlyAssignedMemberAndAdminCanReadAnyMember() throws Exception {
         mockMvc.perform(get("/api/membership/members/{id}/private", memberAId)
-                        .with(jwt().jwt(token -> token.subject(COACH_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("COACH"))))))
+                        .with(roleJwt(COACH_SUBJECT, "COACH")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/membership/members/{id}/private", memberCId)
-                        .with(jwt().jwt(token -> token.subject(COACH_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("COACH"))))))
+                        .with(roleJwt(COACH_SUBJECT, "COACH")))
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/membership/members/{id}/private", memberBId)
-                        .with(jwt().jwt(token -> token.subject("gym-admin")
-                                .claim("realm_access", Map.of("roles", List.of("ADMIN"))))))
+                        .with(roleJwt("gym-admin", "ADMIN")))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void roleMatrixProtectsAllExistingMembershipRoutes() throws Exception {
+        var admin = roleJwt("gym-admin", "ADMIN");
+        var coach = roleJwt(COACH_SUBJECT, "COACH");
+        var member = roleJwt(MEMBER_A_SUBJECT, "MEMBER");
+
+        mockMvc.perform(get("/api/membership/me").with(admin)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.employeeProfileId").isNotEmpty());
+        mockMvc.perform(get("/api/membership/admin/operations").with(admin)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/coach/assigned-members").with(admin)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/members/{id}/private", memberCId).with(admin))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/membership/me").with(coach)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.employeeProfileId").isNotEmpty());
+        mockMvc.perform(get("/api/membership/coach/assigned-members").with(coach))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/members/{id}/private", memberAId).with(coach))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/members/{id}/private", memberCId).with(coach))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.details").isMap());
+        mockMvc.perform(get("/api/membership/admin/operations").with(coach))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/membership/me").with(member)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.memberProfileId").value(memberAId.toString()));
+        mockMvc.perform(get("/api/membership/members/{id}/private", memberAId).with(member))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/membership/members/{id}/private", memberBId).with(member))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mockMvc.perform(get("/api/membership/coach/assigned-members").with(member))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/membership/admin/operations").with(member))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void onlyConfiguredFrontendOriginCanMakeCorsRequests() throws Exception {
+        mockMvc.perform(options("/api/membership/me")
+                        .header("Origin", "http://localhost:8088")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string("Access-Control-Allow-Origin", "http://localhost:8088"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string("Access-Control-Allow-Headers",
+                                org.hamcrest.Matchers.containsString("Authorization")));
+
+        mockMvc.perform(options("/api/membership/me")
+                        .header("Origin", "https://untrusted.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().doesNotExist("Access-Control-Allow-Origin"));
+    }
+
+    @Test
+    void unknownMembershipResourcesUseUniformNotFoundJsonForAdministrators() throws Exception {
+        mockMvc.perform(get("/api/membership/unknown-resource")
+                        .with(roleJwt("gym-admin", "ADMIN")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.details").isMap());
+    }
+
+    @Test
+    void invalidMemberIdUsesUniformBadRequestJson() throws Exception {
+        mockMvc.perform(get("/api/membership/members/not-a-uuid/private")
+                        .with(roleJwt("gym-admin", "ADMIN")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.details").isMap());
     }
 
     @Test
     void moduleEndpointsEnforceTheModuleRoleBeforeBusinessRouting() throws Exception {
         mockMvc.perform(get("/api/nutrition/private")
-                        .with(jwt().jwt(token -> token.subject(COACH_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("COACH"))))))
+                        .with(roleJwt(COACH_SUBJECT, "COACH")))
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/nutrition/private")
-                        .with(jwt()
-                                .jwt(token -> token.subject(MEMBER_A_SUBJECT)
-                                        .claim("realm_access", Map.of("roles", List.of("MEMBER"))))
-                                .authorities(new SimpleGrantedAuthority("ROLE_MEMBER"))))
+                        .with(roleJwt(MEMBER_A_SUBJECT, "MEMBER")))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void administrationAndCoachActionsRequireTheirApplicationRoles() throws Exception {
         mockMvc.perform(get("/api/membership/admin/operations")
-                        .with(jwt()
-                                .jwt(token -> token.subject("gym-admin")
-                                        .claim("realm_access", Map.of("roles", List.of("ADMIN"))))
-                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                        .with(roleJwt("gym-admin", "ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("AVAILABLE"));
 
         mockMvc.perform(get("/api/membership/admin/operations")
-                        .with(jwt().jwt(token -> token.subject(MEMBER_A_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
+                        .with(roleJwt(MEMBER_A_SUBJECT, "MEMBER")))
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/membership/coach/assigned-members")
-                        .with(jwt()
-                                .jwt(token -> token.subject(COACH_SUBJECT)
-                                        .claim("realm_access", Map.of("roles", List.of("COACH"))))
-                                .authorities(new SimpleGrantedAuthority("ROLE_COACH"))))
+                        .with(roleJwt(COACH_SUBJECT, "COACH")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2));
 
         mockMvc.perform(get("/api/membership/coach/assigned-members")
-                        .with(jwt().jwt(token -> token.subject(MEMBER_A_SUBJECT)
-                                .claim("realm_access", Map.of("roles", List.of("MEMBER"))))))
+                        .with(roleJwt(MEMBER_A_SUBJECT, "MEMBER")))
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void devProvisioningCreatesMemberEmployeeAndCoachAssignment() throws Exception {
+        mockMvc.perform(post("/api/dev/provision")
+                        .header("X-Provisioning-Key", "test-provisioning-token")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "profiles": [
+                                    {"subject":"provisioned-member","username":"member","displayName":"Provisioned Member","profileType":"MEMBER"},
+                                    {"subject":"provisioned-coach","username":"coach","displayName":"Provisioned Coach","profileType":"EMPLOYEE"}
+                                  ],
+                                  "coachAssignments": [
+                                    {"coachSubject":"provisioned-coach","memberSubject":"provisioned-member"}
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profilesProcessed").value(2))
+                .andExpect(jsonPath("$.assignmentsProcessed").value(1));
+
+        org.assertj.core.api.Assertions.assertThat(memberRepository.findByKeycloakUserId("provisioned-member"))
+                .isPresent();
+        org.assertj.core.api.Assertions.assertThat(employeeRepository.findByKeycloakUserId("provisioned-coach"))
+                .isPresent();
+        org.assertj.core.api.Assertions.assertThat(assignmentRepository
+                .existsByCoachSubjectIgnoreCaseAndMemberSubjectIgnoreCaseAndEndedAtIsNull(
+                        "provisioned-coach", "provisioned-member"))
+                .isTrue();
+    }
+
+    private static JwtRequestPostProcessor roleJwt(String subject, String... roles) {
+        return roleJwtWithDisplayName(subject, null, roles);
+    }
+
+    private static JwtRequestPostProcessor roleJwtWithDisplayName(
+            String subject,
+            String displayName,
+            String... roles) {
+        List<String> realmRoles = List.of(roles);
+        List<SimpleGrantedAuthority> authorities = realmRoles.stream()
+                .filter(role -> List.of("ADMIN", "COACH", "MEMBER").contains(role))
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                .toList();
+        return jwt().jwt(token -> {
+            token.subject(subject)
+                    .claim("realm_access", Map.of("roles", realmRoles));
+            if (displayName != null) {
+                token.claim("name", displayName);
+            }
+        }).authorities(authorities.toArray(SimpleGrantedAuthority[]::new));
+    }
 }
