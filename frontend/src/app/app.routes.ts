@@ -3,6 +3,7 @@ import { authGuard, roleGuard } from './route.guards';
 import { DashboardComponent } from './dashboard.component';
 import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
+import { FeedbackComponent } from './feedback.component';
 import { MessagePageComponent } from './message-page.component';
 import { NutritionWorkspaceComponent } from './nutrition-workspace.component';
 import { CoachNutritionComponent } from './coach-nutrition.component';
@@ -42,6 +43,11 @@ export const appRoutes: Routes = [
     component: CoachNutritionComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Coach Nutrition', module: 'M4', description: 'Review and edit meal suggestions for assigned members.', roles: ['COACH'] }
+  },
+  {
+    path: 'feedback',
+    component: FeedbackComponent,
+    canActivate: [authGuard]
   },
   { path: 'forbidden', component: MessagePageComponent, data: { title: 'Access denied', message: 'Your account does not have permission to view this page.' } },
   { path: 'not-found', component: MessagePageComponent, data: { title: 'Page not found', message: 'The page you requested does not exist.' } },
