@@ -1,10 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`Set ${name} before running the membership E2E scenario.`);
-  return value;
+function e2eCredentials() {
+  const adminUsername = process.env.E2E_ADMIN_USERNAME ?? 'gym-admin';
+  const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? process.env.DEV_ADMIN_PASSWORD;
+  const memberUsername = process.env.E2E_MEMBER_USERNAME ?? 'member-a';
+  const memberPassword = process.env.E2E_MEMBER_PASSWORD ?? process.env.DEV_MEMBER_A_PASSWORD;
+  if (!adminPassword || !memberPassword) {
+    const missing = [
+      !adminPassword && 'E2E_ADMIN_PASSWORD (or DEV_ADMIN_PASSWORD)',
+      !memberPassword && 'E2E_MEMBER_PASSWORD (or DEV_MEMBER_A_PASSWORD)'
+    ].filter((name): name is string => typeof name === 'string');
+    throw new Error(
+      `Missing E2E login credentials: ${missing.join(', ')}. `
+      + 'Set them in the repository-root .env file or the current environment. '
+      + 'The Playwright config reads only these credential variables from .env.'
+    );
+  }
+
+  return { adminUsername, adminPassword, memberUsername, memberPassword };
 }
 
 async function signIn(page: import('@playwright/test').Page, username: string, password: string) {
@@ -17,10 +31,7 @@ async function signIn(page: import('@playwright/test').Page, username: string, p
 }
 
 test('admin manages membership and member access remains owner-scoped', async ({ browser, request }) => {
-  const adminUsername = requiredEnvironment('E2E_ADMIN_USERNAME');
-  const adminPassword = requiredEnvironment('E2E_ADMIN_PASSWORD');
-  const memberUsername = requiredEnvironment('E2E_MEMBER_USERNAME');
-  const memberPassword = requiredEnvironment('E2E_MEMBER_PASSWORD');
+  const { adminUsername, adminPassword, memberUsername, memberPassword } = e2eCredentials();
   const firstName = `E2E${Date.now()}`;
   const lastName = 'Member';
   const email = `e2e-${randomUUID()}@smartgym.local`;

@@ -376,26 +376,27 @@ mvn -B test
 ```
 
 The Playwright scenario uses the local Compose stack, MailHog, and a test-only
-mock OpenAI-compatible LLM; it does not contact Groq. Set the E2E credentials
-to the same local values used by `scripts/provision-dev.ps1`, then launch the
-test stack and install Chromium once:
+mock OpenAI-compatible LLM; it does not contact Groq. Put the same local
+development passwords used by `scripts/provision-dev.ps1` into the ignored
+repository-root `.env` as `DEV_ADMIN_PASSWORD` and `DEV_MEMBER_A_PASSWORD`.
+The Playwright configuration loads only these credential variables (or
+`E2E_ADMIN_PASSWORD` and `E2E_MEMBER_PASSWORD`) from `.env`; it does not load
+`LLM_API_KEY` into the test process. Usernames default to `gym-admin` and
+`member-a`, and can be overridden with `E2E_ADMIN_USERNAME` and
+`E2E_MEMBER_USERNAME`. Then launch the test stack and install Chromium once:
 
 ```powershell
 docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml up --build -d
 npx --prefix frontend playwright install chromium
-$env:E2E_ADMIN_USERNAME = "gym-admin"
-$env:E2E_ADMIN_PASSWORD = $env:DEV_ADMIN_PASSWORD
-$env:E2E_MEMBER_USERNAME = "member-a"
-$env:E2E_MEMBER_PASSWORD = $env:DEV_MEMBER_A_PASSWORD
 npm --prefix frontend run test:e2e
 ```
 
-`DEV_ADMIN_PASSWORD` and `DEV_MEMBER_A_PASSWORD` must be loaded from the
-operator's local environment; do not put credentials in the repository. The
-E2E test creates a membership profile using a random Keycloak subject, since
-account creation is intentionally not part of the membership API. It then
-checks that the existing `member-a` identity receives `403` when requesting
-that profile. Stop the test stack without deleting local data with:
+If credentials are missing, the test reports all required password variable
+names without displaying their values. Do not put credentials in tracked
+files. The E2E test creates a membership profile using a random Keycloak
+subject, since account creation is intentionally not part of the membership
+API. It then checks that the existing `member-a` identity receives `403` when
+requesting that profile. Stop the test stack without deleting local data with:
 
 ```powershell
 docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml down
