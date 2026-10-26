@@ -111,17 +111,17 @@ infrastructure-only; it is not an application administrator. 4. Open `http://loc
 ## Database schema and migrations
 
 The API uses Flyway migrations under
-`backend/src/main/resources/db/migration`. `V1__baseline.sql` creates the
-initial PostgreSQL schema; V2–V6 add calorie-target mode, generation-context
-snapshots, persistent dated plans, saved goals/preferences/hydration, and
-feedback persistence.
+`backend/src/main/resources/db/migration`. `V1__membership_schema.sql` creates
+the initial membership schema; later migrations add membership, nutrition, and
+feedback features. `V15` adds courses, scheduled sessions, reservations, and
+the retained equipment-maintenance tables.
 New installations using a fresh, empty database apply the complete migration
 sequence on first API startup; Hibernate validates the mapped schema and does
 not modify it. If the Compose PostgreSQL volume already contains a database,
 review the existing database procedure below before starting the API.
 
 For an existing database, first take a database backup and compare its schema
-with `V1__baseline.sql`. Do not baseline a database with unrelated or
+with `V1__membership_schema.sql`. Do not baseline a database with unrelated or
 unreviewed schema drift. First inspect whether `flyway_schema_history` already
 exists; do not baseline a database that already has migration history. Only
 after confirming the existing schema represents V1 and there is no migration
@@ -512,6 +512,10 @@ configuration only; it sent no HTTP requests and is not a load benchmark.
   gates; validated scripts are not performance results.
   These are prior verification results; documentation-only changes do not
   rerun those checks.
+The Courses workspace supports predefined course types, session scheduling,
+member reservations, and an intelligent timetable assistant. Coaches can view
+reservations for sessions assigned to their account; scheduling and reservation
+permissions are enforced by the API.
 
 The Keycloak client allowlist contains only the Angular root and the exact
 SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`,

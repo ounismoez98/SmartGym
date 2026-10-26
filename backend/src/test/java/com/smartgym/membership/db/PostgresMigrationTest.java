@@ -48,7 +48,7 @@ class PostgresMigrationTest {
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
                 .contains("1", "2", "3", "4", "5", "6", "7",
-                        "8", "9", "10", "11", "12", "13", "100");
+                        "8", "9", "10", "11", "12", "13", "14", "15", "100");
 
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM subscription_plan WHERE code IN ('MONTHLY', 'ANNUAL')",
@@ -60,6 +60,12 @@ class PostgresMigrationTest {
                         + "WHERE table_schema = 'public' AND table_name = 'business_profiles'",
                 Integer.class))
                 .isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                        + "WHERE table_schema = 'public' AND table_name IN "
+                        + "('courses', 'course_sessions', 'reservations', 'equipment', 'maintenance_tickets')",
+                Integer.class))
+                .isEqualTo(5);
     }
 
     @Test
