@@ -1,6 +1,7 @@
 package com.smartgym.membership.assistant;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -9,6 +10,8 @@ import java.util.stream.Stream;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartgym.membership.audit.AuditLog;
 import com.smartgym.membership.audit.AuditLogRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
 import com.smartgym.membership.profile.Member;
 import com.smartgym.membership.profile.MemberRepository;
 import com.smartgym.membership.profile.MemberSubscription;
@@ -41,6 +44,7 @@ class AssistantServiceTest {
     private final LlmClient llmClient = mock(LlmClient.class);
     private final GymPolicyRepository policyRepository = mock(GymPolicyRepository.class);
     private final SubscriptionPlanRepository planRepository = mock(SubscriptionPlanRepository.class);
+    private final EmployeeRepository employeeRepository = mock(EmployeeRepository.class);
     private final MemberSubscriptionRepository subscriptionRepository = mock(MemberSubscriptionRepository.class);
     private final MemberRepository memberRepository = mock(MemberRepository.class);
     private final ReminderDraftRepository reminderRepository = mock(ReminderDraftRepository.class);
@@ -55,6 +59,7 @@ class AssistantServiceTest {
                 new ObjectMapper(),
                 policyRepository,
                 planRepository,
+                employeeRepository,
                 subscriptionRepository,
                 memberRepository,
                 reminderRepository,
@@ -64,6 +69,8 @@ class AssistantServiceTest {
         when(reminderRepository.save(any(ReminderDraft.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(policyRepository.findAllByValidatedTrueOrderByTitleAsc()).thenReturn(List.of());
+        when(planRepository.findAll()).thenReturn(List.of());
+        when(employeeRepository.findAll()).thenReturn(List.of());
     }
 
     @ParameterizedTest
@@ -116,6 +123,13 @@ class AssistantServiceTest {
 
         assertThat(result.body()).contains("[À COMPLÉTER]");
         verify(llmClient, never()).complete(any(), any(), anyBoolean());
+    }
+
+    private static SubscriptionPlan inactivePlan() {
+        SubscriptionPlan plan = new SubscriptionPlan(
+                UUID.randomUUID(), "OLD", "Old plan", "Inactive", 30, 5000, "TND");
+        plan.update("Old plan", "Inactive", 30, 5000, "TND", false);
+        return plan;
     }
 
     @Test
@@ -243,6 +257,49 @@ class AssistantServiceTest {
                         "alice@example.test",
                         "+1 202-555-0198",
                         "123e4567-e89b-12d3-a456-426614174000");
+    }
+
+    @Test
+    void explainProvidesVerifiedPlansCoachesAndPolicyFactsWithoutPersonalIdentifiers() {
+        GymPolicy policy = mock(GymPolicy.class);
+        when(policy.getTitle()).thenReturn("Hours and renewal");
+        when(policy.getContent()).thenReturn(
+                "Open weekdays 06:00-22:00. Renewal requires a signed renewal form.");
+        when(policyRepository.findAllByValidatedTrueOrderByTitleAsc()).thenReturn(List.of(policy));
+        when(planRepository.findAll()).thenReturn(List.of(
+                new SubscriptionPlan(UUID.randomUUID(), "MONTH", "Monthly", "Gym access", 30, 12500, "TND"),
+                inactivePlan()));
+        Employee coach = new Employee(
+                UUID.randomUUID(), "coach-keycloak-id", "coach", "Taylor Coach",
+                "Taylor", "Coach", "taylor@example.test", "Strength Coach", LocalDate.now());
+        Employee inactiveCoach = new Employee(
+                UUID.randomUUID(), "inactive-keycloak-id", "inactive", "Inactive Coach",
+                "Inactive", "Coach", "inactive@example.test", "Personal Trainer", LocalDate.now());
+        inactiveCoach.deactivate();
+        Employee administrator = new Employee(
+                UUID.randomUUID(), "admin-keycloak-id", "admin", "Gym Administrator",
+                "Gym", "Administrator", "admin@example.test", "Administrator", LocalDate.now());
+        when(employeeRepository.findAll()).thenReturn(List.of(coach, inactiveCoach, administrator));
+        when(llmClient.complete(any(), any(), org.mockito.ArgumentMatchers.eq(false))).thenReturn("Answer");
+
+        service.explain(new AssistantExplainRequest(null, "What are the hours, prices, coaches and renewal papers?"));
+
+        org.mockito.ArgumentCaptor<String> systemPrompt = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> facts = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(llmClient).complete(systemPrompt.capture(), facts.capture(), org.mockito.ArgumentMatchers.eq(false));
+        assertThat(systemPrompt.getValue())
+                .contains("administrative assistant", "renewal paperwork", "No separate course catalog")
+                .contains("prices are already formatted", "Never invent dates, prices, plans");
+        assertThat(facts.getValue())
+                .contains("06:00-22:00", "signed renewal form", "Monthly", "125.00 TND", "Taylor Coach",
+                        "Strength Coach")
+                .doesNotContain(
+                        "Inactive Coach",
+                        "Gym Administrator",
+                        "taylor@example.test",
+                        "admin@example.test",
+                        "coach-keycloak-id",
+                        "inactive-keycloak-id");
     }
 
     @Test
