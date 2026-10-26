@@ -1,5 +1,96 @@
 $ErrorActionPreference = "Stop"
 
+function Import-RepoDotEnv {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing $Path. Copy .env.example to .env in the repository root and set local secrets."
+    }
+
+    Get-Content -LiteralPath $Path | ForEach-Object {
+        $line = $_.Trim()
+        if ($line.Length -eq 0 -or $line.StartsWith("#")) {
+            return
+        }
+
+        $equalsIndex = $line.IndexOf("=")
+        if ($equalsIndex -lt 1) {
+            return
+        }
+
+        $name = $line.Substring(0, $equalsIndex).Trim()
+        $value = $line.Substring($equalsIndex + 1).Trim()
+        if ($value.Length -ge 2) {
+            $first = $value[0]
+            $last = $value[$value.Length - 1]
+            if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+
+        Set-Item -Path "env:$name" -Value $value
+    }
+}
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Import-RepoDotEnv -Path (Join-Path $repoRoot ".env")
+
+function Test-KeycloakBaseUrl {
+    param([Parameter(Mandatory = $true)][string]$BaseUrl)
+
+    try {
+        $wellKnown = Invoke-RestMethod `
+            -Method Get `
+            -Uri "$($BaseUrl.TrimEnd('/'))/realms/master/.well-known/openid-configuration" `
+            -TimeoutSec 8
+        return ($wellKnown.issuer -match "/realms/master")
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-KeycloakBaseUrl {
+    param([int]$Port = 8080)
+
+    if (-not [string]::IsNullOrWhiteSpace($env:KEYCLOAK_BASE_URL)) {
+        $explicit = $env:KEYCLOAK_BASE_URL.Trim().TrimEnd("/")
+        if (-not (Test-KeycloakBaseUrl -BaseUrl $explicit)) {
+            throw "KEYCLOAK_BASE_URL is set to '$explicit' but Keycloak is not reachable there (master realm OpenID configuration failed)."
+        }
+        return $explicit
+    }
+
+    $localhostBase = "http://localhost:$Port"
+    if (Test-KeycloakBaseUrl -BaseUrl $localhostBase) {
+        return $localhostBase
+    }
+
+    $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "127.*" } |
+        Select-Object -ExpandProperty IPAddress -Unique
+
+    foreach ($address in $addresses) {
+        $candidate = "http://${address}:$Port"
+        if (Test-KeycloakBaseUrl -BaseUrl $candidate) {
+            Write-Warning "Using $candidate for Keycloak because $localhostBase is not Keycloak (another process often Jenkins/WSL may be bound to localhost on port $Port)."
+            return $candidate
+        }
+    }
+
+    throw @"
+Could not reach Keycloak on port $Port.
+
+$localhostBase is in use but is not Keycloak. HTTP 403 with 'No valid crumb' usually means Jenkins (or similar) is answering on localhost:$Port while Docker publishes Keycloak on the same port via another interface.
+
+Fix options:
+  - Stop the conflicting service on localhost:$Port, then rerun this script; or
+  - Set KEYCLOAK_BASE_URL in .env (example: http://172.x.x.x:$Port — use an address where /realms/master/.well-known/openid-configuration returns JSON); or
+  - Change Keycloak's host port in docker-compose.yml and align the frontend Keycloak URL.
+
+Ensure the api container is up before the final provisioning step: docker compose ps && docker compose logs api
+"@
+}
+
 $requiredVariables = @(
     "KEYCLOAK_ADMIN_USERNAME",
     "KEYCLOAK_ADMIN_PASSWORD",
@@ -13,11 +104,15 @@ $requiredVariables = @(
 
 foreach ($name in $requiredVariables) {
     if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-        throw "Set $name in the current PowerShell environment before provisioning."
+        throw "Set $name in the repository .env file (see .env.example) or in the current PowerShell session before provisioning."
     }
 }
 
-$keycloakBase = "http://localhost:8180"
+$keycloakPort = 8080
+if (-not [string]::IsNullOrWhiteSpace($env:KEYCLOAK_HOST_PORT) -and $env:KEYCLOAK_HOST_PORT -match "^\d+$") {
+    $keycloakPort = [int]$env:KEYCLOAK_HOST_PORT
+}
+$keycloakBase = Resolve-KeycloakBaseUrl -Port $keycloakPort
 $apiBase = "http://localhost:8081"
 $realm = "gym"
 $adminTokenResponse = Invoke-RestMethod `

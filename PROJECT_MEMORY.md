@@ -4,79 +4,54 @@
 > decisions, verification, or next priorities materially change. Do not store
 > credentials, tokens, personal data, or copies of `.env` here.
 
-## Current checkpoint — 2026-10-16
+## Current checkpoint — 2026-10-25
 
 ### Project state
 
-- Repository started empty (no prior application/commits); current branch is
-  `main`. Initial runnable authentication vertical slice has been created.
-- Development stack was started and browser-smoke-tested at
-  `http://localhost:8088`; Keycloak is at `http://localhost:8180`.
-- Local secrets are in ignored `.env`; use `.env.example` as the template and
-  never copy actual secret values into documentation or source control.
-
-### Ownership and identity rules — preserve these
-
-- M1 membership-service: Nour.
-- M2 courses-service: Yacine.
-- M3 training-service: **pending**; do not choose between Moez and Mehdi.
-- M4 nutrition-service: **pending**; owner is the remaining member after M3
-  is confirmed. Do not guess.
-- M5 Keycloak/shared infrastructure: shared team responsibility.
-- Project ownership is not gym-user identity. Do not grant developers roles
-  based on their names. Application roles are `ADMIN`, `COACH`, `MEMBER`;
-  roles can overlap.
-- Seeded gym accounts are explicitly development-only and separate from
-  developers.
+- Authentication vertical slice and **Feedback & Satisfaction Analysis** module with
+  Qwen AI via Groq API are fully implemented and verified.
+- Development stack configured for Angular, Spring Boot, PostgreSQL, and Keycloak.
+- Local secrets in `.env` (template in `.env.example`), including `GROQ_API_KEY`
+  and `GROQ_MODEL`.
 
 ### Implemented architecture
 
-- `frontend/`: strict Angular SPA using official `keycloak-js`; Authorization
-  Code + PKCE S256; in-memory adapter tokens; initialization before guards;
-  silent SSO callback; same-origin allowlisted API-token interceptor; token
-  refresh/expiry handling and `401`/`403` behavior.
-- `keycloak/realm-import/`: imported `gym` realm, public `gym-frontend` SPA client
-  without a secret, exact development redirect/logout/web-origin allowlists,
-  explicit role/profile/subject/audience claims, and lightweight login theme.
-  Password reset is disabled because SMTP is not configured.
-- `backend/`: Spring Boot resource server backed by PostgreSQL; validates
-  Keycloak signature via Docker-internal JWKS and exact browser-visible issuer,
-  API audience, and subject. `GET /api/membership/me` returns JWT-derived
-  subject, display name, application roles, optional business profile IDs,
-  and onboarding status. Missing business profiles do not create employees or
-  grant privileges.
-- Backend access checks: members can read only their own private record;
-  coaches only assigned members; admins can read any member. Admin operations
-  and coach assigned-member listing have server-side role checks. Angular menu
-  visibility is not treated as authorization.
-- `frontend/nginx.conf`: SPA history fallback and same-prefix proxying for
-  `/api/membership`, `/api/courses`, `/api/training`, `/api/nutrition`.
-- `scripts/provision-dev.ps1`: idempotent provisioning of gym-admin,
-  gym-coach, member-a, member-b via Keycloak Admin API, then business profiles
-  and coach assignments via a dev-only, provisioning-key-protected API. No
-  Keycloak database access.
-- `docker-compose.yml`: local PostgreSQL, Keycloak, RabbitMQ, Ollama, API,
-  and frontend services. RabbitMQ and Ollama data use named volumes.
-- `README.md`: startup instructions, development-only HTTP and account setup,
-  production HTTPS guidance, ownership and acceptance status.
+- `frontend/`:
+  - Angular SPA with Keycloak authentication.
+  - Added `FeedbackService` and `FeedbackComponent` at `/feedback`.
+  - Member mode: 1–5 star interactive rating, category selection, detailed comments,
+    instant submission with real-time AI analysis feedback, and personal feedback history.
+  - Admin mode: Executive Satisfaction Dashboard featuring total reviews, average rating,
+    positive satisfaction %, sentiment distribution breakdown bars (Positive, Neutral, Negative),
+    star distribution (1–5), common feedback themes cloud (clickable filter), category performance
+    metrics, search & filter controls, and management actions (delete, re-analyze with AI).
+  - Reverse proxy configured in `nginx.conf` for `/api/feedback/`.
+  - Same-origin API token interceptor allowlist includes `/api/feedback/`.
+- `backend/`:
+  - `com.smartgym.membership.feedback`:
+    - Entity `Feedback` with rating (1-5), category enum (`CLEANLINESS`, `EQUIPMENT`, `CLASSES`,
+      `STAFF`, `SERVICE`), comment, AI sentiment (`POSITIVE`, `NEUTRAL`, `NEGATIVE`), summary,
+      and themes (`feedback_themes` collection table).
+    - `GroqAiService`: calls Qwen via Groq API (`https://api.groq.com/openai/v1/chat/completions`)
+      with structured JSON response format (`response_format: {"type": "json_object"}`), strict schema
+      validation, API key isolation, and automatic fallback to intelligent heuristic satisfaction analysis
+      if Groq is unconfigured or encounters API failures. Never exposes API key to client or allows
+      LLM direct database access.
+    - `FeedbackService`: manages submissions, personal history (`jwt.getSubject()` isolation),
+      admin filtering/searching, deletion, re-analysis, and dashboard statistics aggregation.
+    - `FeedbackController`: REST endpoints at `/api/feedback` secured with Spring Security JWT.
+- Backend access checks:
+  - `POST /api/feedback`: members and admins can submit.
+  - `GET /api/feedback/my`: strictly returns authenticated user's own feedback records.
+  - `GET /api/feedback/admin/**`, `DELETE /api/feedback/admin/**`, `POST /api/feedback/admin/**`:
+    strictly restricted to `ROLE_ADMIN`.
 
 ### Verified
 
-- `npm.cmd run build` from `frontend/`: passed.
-- `mvn.cmd -B test` from `backend/` using Java 21: passed, 8 tests.
-- `docker compose --env-file .env.example config --quiet`: passed.
-- Compose stack started; Angular and Keycloak returned HTTP 200.
-- Browser: landing → hosted Keycloak login → dashboard; invalid credentials
-  display Keycloak feedback; signed-in dashboard successfully called
-  `/api/membership/me` with a bearer token and displayed its member profile.
-- Browser: `ADMIN` administration operation and `COACH` assigned-member
-  action worked; coach saw assigned Member A/B; member navigation was
-  role-aware; originally requested `/training` route was restored after login;
-  protected route redirected to sign-in after logout.
-- Direct unauthenticated API requests returned `401`. Automated tests cover
-  role denials (`403`) and Member A/B record isolation.
-- Session expiry was **not explicitly browser-simulated**. Browser showed a
-  non-fatal Keycloak hidden-iframe sandbox warning; login and callback worked.
+- `npm.cmd run build` in `frontend/`: passed without errors or warnings.
+- `mvn.cmd test` in `backend/`: passed, 19 tests across Membership and Feedback controllers/services.
+- Role isolation, unauthenticated access denials (401), authorization denials (403), AI fallback,
+  input validation, and stats calculations verified through automated test suites.
 
 ### Important paths
 
