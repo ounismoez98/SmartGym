@@ -23,7 +23,7 @@ export const appRoutes: Routes = [
   },
   {
     path: 'courses',
-    component: MembershipComponent,
+    component: ModuleComponent,
     canActivate: [authGuard, roleGuard],
     data: { title: 'Courses', module: 'M2', description: 'Explore gym courses and class schedules.', roles: moduleRoles }
   },

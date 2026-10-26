@@ -5,9 +5,12 @@ import { resolve } from 'node:path';
 const localCredentialNames = new Set([
   'E2E_ADMIN_USERNAME',
   'E2E_ADMIN_PASSWORD',
+  'E2E_COACH_USERNAME',
+  'E2E_COACH_PASSWORD',
   'E2E_MEMBER_USERNAME',
   'E2E_MEMBER_PASSWORD',
   'DEV_ADMIN_PASSWORD',
+  'DEV_COACH_PASSWORD',
   'DEV_MEMBER_A_PASSWORD'
 ]);
 

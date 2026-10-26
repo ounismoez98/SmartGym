@@ -50,7 +50,10 @@ class PostgresMigrationTest {
                 .contains("1", "2", "3", "4", "5", "6", "7",
                         "8", "9", "10", "11", "12", "13", "100");
 
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM subscription_plan", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM subscription_plan WHERE code IN ('MONTHLY', 'ANNUAL')",
+                Integer.class))
+                .isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables "

@@ -344,18 +344,23 @@ pre-Flyway development database.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
 payment deletion-guard tests. The latest full Maven run reported 209 tests:
-0 failures and 10 skipped because Docker-backed integration tests were not
-executed in that run. Separate focused tests cover provisioning Keycloak
-accounts and linking the generated ID to a profile. Additional tests verify
-safe provider diagnostics for rejected keys and unavailable models/endpoints.
-Angular unit tests passed 61 tests, and the production build passed. The
-Playwright Chromium scenario covered the admin membership workflow, Keycloak
-member and coach account creation, first-login password change, assistant
-explanation against the mock LLM, payment correction history, MailHog
-confirmation, and member ownership denial.
-Not verified: Testcontainers against PostgreSQL in the latest Maven run,
-Groq against the real remote provider, and a manual browser review of all
-screens and roles. The automated E2E run is not a substitute for that manual
+0 failures, errors, or skips. Testcontainers 1.21.4 is pinned explicitly
+because the Spring Boot-managed 1.20.6 Docker client could not communicate
+with the current Docker Desktop engine. The six nutrition PostgreSQL
+integration tests are intentionally gated by `smartgym.postgres.it.url` and
+require a dedicated disposable database and user both named `smartgym_it`;
+without these properties they are skipped to avoid modifying an arbitrary
+database. The full run supplied that isolated database. Separate focused
+tests cover provisioning Keycloak accounts and linking the generated ID to a
+profile. Additional tests verify safe provider diagnostics for rejected keys
+and unavailable models/endpoints. Angular unit tests passed 61 tests, and the
+production build passed with an initial-bundle budget warning. Three
+Playwright Chromium tests passed: the admin membership workflow (account
+creation, payment correction, assistant/reminder flows, and owner denial),
+public routes, and admin/coach/member route authorization.
+Not verified: Groq against the real remote provider, local Ollama inference,
+or a manual functional review of every screen and workflow. The route smoke
+tests verify navigation and role access but do not replace that full manual
 review.
 The OpenAPI JSON document is publicly readable; the described API operations
 still require a valid bearer JWT and enforce their normal role/ownership rules.
@@ -363,18 +368,25 @@ still require a valid bearer JWT and enforce their normal role/ownership rules.
 Run the backend tests from the `backend` directory:
 
 ```powershell
-mvn -B test
+mvn -B "-Dsmartgym.postgres.it.url=jdbc:postgresql://localhost:5432/smartgym_it" "-Dsmartgym.postgres.it.username=smartgym_it" "-Dsmartgym.postgres.it.password=$env:SMARTGYM_IT_PASSWORD" test
 ```
+
+`SMARTGYM_IT_PASSWORD` must be set for a disposable PostgreSQL test database
+named `smartgym_it` and owned by user `smartgym_it`. The nutrition integration
+tests reset their own rows and exercise migrations, so do not point this
+property at a development or shared database. With Docker Desktop available,
+the separate Testcontainers migration tests run automatically.
 
 The Playwright scenario uses the local Compose stack, MailHog, and a test-only
 mock OpenAI-compatible LLM; it does not contact Groq. Put the same local
 development passwords used by `scripts/provision-dev.ps1` into the ignored
 repository-root `.env` as `DEV_ADMIN_PASSWORD` and `DEV_MEMBER_A_PASSWORD`.
-The Playwright configuration loads only these credential variables (or
-`E2E_ADMIN_PASSWORD` and `E2E_MEMBER_PASSWORD`) from `.env`; it does not load
-`LLM_API_KEY` into the test process. Usernames default to `gym-admin` and
-`member-a`, and can be overridden with `E2E_ADMIN_USERNAME` and
-`E2E_MEMBER_USERNAME`. Then launch the test stack and install Chromium once:
+The Playwright configuration loads only the admin, coach, and member login
+credentials (or corresponding `E2E_*_PASSWORD` overrides) from `.env`; it
+does not load `LLM_API_KEY` into the test process. Usernames default to
+`gym-admin`, `gym-coach`, and `member-a`, and can be overridden with
+`E2E_ADMIN_USERNAME`, `E2E_COACH_USERNAME`, and `E2E_MEMBER_USERNAME`. Then
+launch the test stack and install Chromium once:
 
 ```powershell
 docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml up --build -d
@@ -387,6 +399,9 @@ names without displaying their values. Do not put credentials in tracked
 files. The E2E test creates a member login through the Membership UI, confirms
 that Keycloak's generated ID is linked to the profile, then checks that the
 existing `member-a` identity receives `403` when requesting that profile.
+The route-smoke scenario also loads every SPA route as admin, coach, and
+member, checks each role's allowed and forbidden pages, and fails on uncaught
+browser errors or API 5xx responses.
 Stop the test stack without deleting local data with:
 
 ```powershell
