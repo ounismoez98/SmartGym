@@ -465,6 +465,14 @@ class Module2BusinessRulesTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("member-api")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("member-other"))));
+        mockMvc.perform(get(sessionPath).with(jwt().jwt(token -> token.subject("coach-visible"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_COACH"))))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("member-api")));
+        mockMvc.perform(get("/api/courses/sessions/" + otherCoachSession.getSessionId() + "/reservations")
+                        .with(jwt().jwt(token -> token.subject("coach-visible"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_COACH"))))
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/courses/reservations").with(jwt().jwt(token -> token.subject("admin-api")
                         .claim("realm_access", Map.of("roles", List.of("ADMIN"))))
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))

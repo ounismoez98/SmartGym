@@ -128,6 +128,21 @@ import { AuthService } from './auth.service';
                 <button class="button quiet danger" type="button" *ngIf="isAdmin && session.status === 'SCHEDULED'" (click)="cancelSession(session)">Cancel</button>
                 <button class="button quiet" type="button" *ngIf="isMember && canReserve(session)" (click)="reserve(session)">Reserve</button>
                 <span *ngIf="isMember && hasReservation(session.sessionId)">Reserved</span>
+                <button class="button quiet" type="button" *ngIf="isCoach"
+                  (click)="toggleSessionReservations(session.sessionId)">
+                  {{ expandedReservationSessions.has(session.sessionId) ? 'Hide reservations' : 'View reservations' }}
+                </button>
+              </div>
+              <div class="session-reservations" *ngIf="isCoach && expandedReservationSessions.has(session.sessionId)">
+                <p *ngIf="loadingReservationSessions.has(session.sessionId)" class="muted">Loading reservations…</p>
+                <p *ngIf="reservationLoadErrors[session.sessionId]" class="error">{{ reservationLoadErrors[session.sessionId] }}</p>
+                <ng-container *ngIf="!loadingReservationSessions.has(session.sessionId) && !reservationLoadErrors[session.sessionId]">
+                  <p *ngIf="sessionReservations[session.sessionId]?.length === 0" class="muted">No reservations for this session yet.</p>
+                  <article class="item" *ngFor="let reservation of sessionReservations[session.sessionId]">
+                    <div><strong>Member: {{ reservation.memberUsername }}</strong>
+                      <small>Status: {{ reservation.status }}</small></div>
+                  </article>
+                </ng-container>
               </div>
             </article>
           </div>
@@ -229,6 +244,10 @@ export class ModuleComponent implements OnInit {
   sessions: CourseSession[] = [];
   reservations: Reservation[] = [];
   recommendations: TimetableRecommendation[] = [];
+  sessionReservations: Record<string, Reservation[]> = {};
+  expandedReservationSessions = new Set<string>();
+  loadingReservationSessions = new Set<string>();
+  reservationLoadErrors: Record<string, string> = {};
   reservationTargets: Record<string, string> = {};
   assistantSummary = 'No timetable drafts generated yet.';
   loading = false;
@@ -452,6 +471,30 @@ export class ModuleComponent implements OnInit {
     this.run(this.coursesApi.cancelReservation(reservation.reservationId), 'Reservation cancelled.');
   }
 
+  toggleSessionReservations(sessionId: string): void {
+    if (this.expandedReservationSessions.has(sessionId)) {
+      this.expandedReservationSessions.delete(sessionId);
+      return;
+    }
+    this.expandedReservationSessions.add(sessionId);
+    if (Object.hasOwn(this.sessionReservations, sessionId) || this.loadingReservationSessions.has(sessionId)) {
+      return;
+    }
+    this.loadingReservationSessions.add(sessionId);
+    delete this.reservationLoadErrors[sessionId];
+    this.coursesApi.getSessionReservations(sessionId).subscribe({
+      next: (response) => {
+        this.sessionReservations[sessionId] = response.content;
+        this.loadingReservationSessions.delete(sessionId);
+      },
+      error: (error: unknown) => {
+        this.loadingReservationSessions.delete(sessionId);
+        this.reservationLoadErrors[sessionId] =
+          this.describeError(error, 'Could not load reservations for this session.');
+      }
+    });
+  }
+
   confirmedCount(sessionId: string): number {
     return this.reservations.filter((reservation) =>
       reservation.session.sessionId === sessionId && reservation.status === 'CONFIRMED').length;
@@ -518,7 +561,9 @@ export class ModuleComponent implements OnInit {
       coachSubject: this.assistantCoach.trim(),
       roomName: recommendation.roomName,
       maxCapacity: Number(this.assistantCapacity)
-    }), 'Draft approved and session created.');
+    }), 'Draft approved and session created.', () => {
+      this.recommendations = this.recommendations.filter((draft) => draft !== recommendation);
+    });
   }
 
   private run(action: Observable<unknown>, successMessage: string, onSuccess?: () => void): void {

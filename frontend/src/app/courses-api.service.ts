@@ -116,6 +116,13 @@ export class CoursesApiService {
     return this.http.get<PageResponse<Reservation>>(endpoint, { params: { size: 100 } });
   }
 
+  getSessionReservations(sessionId: string) {
+    return this.http.get<PageResponse<Reservation>>(
+      `/api/courses/sessions/${sessionId}/reservations`,
+      { params: { size: 100 } }
+    );
+  }
+
   createReservation(sessionId: string) {
     return this.http.post<Reservation>(`/api/courses/sessions/${sessionId}/reservations`, {});
   }

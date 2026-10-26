@@ -82,19 +82,40 @@ public class TimetableAssistantService {
             }
         }
 
-        recommendations = recommendations.stream()
+        List<RecommendedSlot> rankedRecommendations = recommendations.stream()
                 .sorted(Comparator.comparingInt(RecommendedSlot::score).reversed()
                         .thenComparing(RecommendedSlot::date)
                         .thenComparing(RecommendedSlot::startTime)
                         .thenComparing(RecommendedSlot::roomName))
-                .limit(effectiveLimit)
                 .toList();
+        recommendations = new ArrayList<>();
+        for (RecommendedSlot recommendation : rankedRecommendations) {
+            if (recommendations.size() >= effectiveLimit) {
+                break;
+            }
+            boolean conflictsWithDraft = recommendations.stream().anyMatch(draft ->
+                    recommendation.date().equals(draft.date())
+                            && overlaps(recommendation.startTime(), recommendation.endTime(),
+                            draft.startTime(), draft.endTime())
+                            && (recommendation.roomName().equals(draft.roomName())
+                            || (assignedCoach != null
+                            && recommendation.coachSubject().equals(draft.coachSubject()))));
+            if (!conflictsWithDraft) {
+                recommendations.add(recommendation);
+            }
+        }
 
         return new TimetableAssistantResponse(
                 recommendations,
                 recommendations.isEmpty()
                         ? noRecommendationsSummary(courses)
-                        : "Deterministic timetable suggestions generated as drafts and checked against scheduled room conflicts. Review and approve each session before it is created.");
+                        : recommendationSummary(assignedCoach != null));
+    }
+
+    private String recommendationSummary(boolean coachAssigned) {
+        String conflicts = coachAssigned ? "room and coach" : "room";
+        return "Deterministic timetable suggestions generated as conflict-free drafts and checked against scheduled "
+                + conflicts + " conflicts. Review and approve each session before it is created.";
     }
 
     private String noRecommendationsSummary(List<Course> courses) {
@@ -140,6 +161,10 @@ public class TimetableAssistantService {
             }
         }
         return false;
+    }
+
+    private boolean overlaps(LocalTime firstStart, LocalTime firstEnd, LocalTime secondStart, LocalTime secondEnd) {
+        return firstStart.isBefore(secondEnd) && firstEnd.isAfter(secondStart);
     }
 
     private int resolveDurationMinutes(Course course) {

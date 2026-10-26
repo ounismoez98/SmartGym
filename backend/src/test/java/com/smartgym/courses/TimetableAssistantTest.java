@@ -81,4 +81,28 @@ class TimetableAssistantTest {
         assertThat(response.recommendations()).isEmpty();
         assertThat(response.summary()).contains("No viable timetable slots");
     }
+
+    @Test
+    void recommendationsDoNotConflictWithEachOtherForTheAssignedCoachOrRoom() {
+        courseRepository.save(Course.create("Yoga", "Beginner class", "BEGINNER", 45, null));
+        LocalDate date = LocalDate.now().plusDays(1);
+
+        TimetableAssistantService.TimetableAssistantResponse response =
+                timetableAssistantService.generateRecommendations(date, date, 10, "coach-1");
+
+        assertThat(response.recommendations()).hasSize(10);
+        for (int firstIndex = 0; firstIndex < response.recommendations().size(); firstIndex++) {
+            TimetableAssistantService.RecommendedSlot first = response.recommendations().get(firstIndex);
+            for (int secondIndex = firstIndex + 1; secondIndex < response.recommendations().size(); secondIndex++) {
+                TimetableAssistantService.RecommendedSlot second = response.recommendations().get(secondIndex);
+                if (!first.date().equals(second.date())) {
+                    continue;
+                }
+                boolean overlap = first.startTime().isBefore(second.endTime())
+                        && first.endTime().isAfter(second.startTime());
+                assertThat(overlap && (first.roomName().equals(second.roomName())
+                        || first.coachSubject().equals(second.coachSubject()))).isFalse();
+            }
+        }
+    }
 }
