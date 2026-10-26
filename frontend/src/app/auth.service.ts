@@ -10,7 +10,7 @@ const knownRoutes = new Set([
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly keycloak = new Keycloak({
-    url: 'http://localhost:8080',
+    url: 'http://localhost:8082',
     realm: 'smart-gym',
     clientId: 'smart-gym-frontend'
   });
@@ -19,11 +19,13 @@ export class AuthService {
   private readonly authenticatedState = signal(false);
   private readonly roleState = signal<string[]>([]);
   private readonly userNameState = signal('');
+  private readonly subjectState = signal('');
   private readonly initializationErrorState = signal('');
 
   readonly authenticated = this.authenticatedState.asReadonly();
   readonly roles = this.roleState.asReadonly();
   readonly userName = this.userNameState.asReadonly();
+  readonly subject = this.subjectState.asReadonly();
   readonly initializationError = this.initializationErrorState.asReadonly();
 
   async initialize(): Promise<void> {
@@ -104,6 +106,7 @@ export class AuthService {
     if (!authenticated) {
       this.roleState.set([]);
       this.userNameState.set('');
+      this.subjectState.set('');
       return;
     }
     const token = this.keycloak.tokenParsed;
@@ -123,6 +126,7 @@ export class AuthService {
         : typeof preferredUsername === 'string' ? preferredUsername
           : 'Gym user'
     );
+    this.subjectState.set(typeof token?.['sub'] === 'string' ? token['sub'] : '');
     this.refreshAttempted = false;
   }
 
@@ -130,6 +134,7 @@ export class AuthService {
     this.authenticatedState.set(false);
     this.roleState.set([]);
     this.userNameState.set('');
+    this.subjectState.set('');
   }
 
   private safeReturnUrl(value: string): string {

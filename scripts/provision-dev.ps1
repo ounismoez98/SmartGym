@@ -1,5 +1,40 @@
 $ErrorActionPreference = "Stop"
 
+function Import-EnvFile {
+    $envFile = Join-Path $PSScriptRoot "..\.env"
+    if (-not (Test-Path $envFile)) {
+        return
+    }
+
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) {
+            return
+        }
+
+        $parts = $line.Split("=", 2)
+        if ($parts.Count -ne 2) {
+            return
+        }
+
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim()
+
+        if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        elseif ($value.StartsWith("'") -and $value.EndsWith("'")) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+            [Environment]::SetEnvironmentVariable($name, $value)
+        }
+    }
+}
+
+Import-EnvFile
+
 $requiredVariables = @(
     "KEYCLOAK_ADMIN_USERNAME",
     "KEYCLOAK_ADMIN_PASSWORD",
@@ -12,11 +47,11 @@ $requiredVariables = @(
 
 foreach ($name in $requiredVariables) {
     if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-        throw "Set $name in the current PowerShell environment before provisioning."
+        throw "Set $name in the current PowerShell environment or in .env before provisioning."
     }
 }
 
-$keycloakBase = "http://localhost:8080"
+$keycloakBase = "http://localhost:8082"
 $apiBase = "http://localhost:8081"
 $realm = "smart-gym"
 $adminTokenResponse = Invoke-RestMethod `

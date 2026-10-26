@@ -66,6 +66,25 @@ should use the Nginx `/api/...` URLs.
    infrastructure-only; it is not an application administrator.
 4. Open `http://localhost:8088` and select **Sign in**.
 
+The development database does not seed Courses module data. Sign in as
+`gym-admin`, open **Courses**, and create a course and its first session in the
+same form. The **Create course and schedule a session** form creates
+or reuses the selected one of eight predefined course types and persists its
+date, time, coach, room, and capacity together in one operation. The session
+then appears in the Schedule for its date; later edits update that session.
+Each course type provides default required-equipment recommendations, shown
+to its assigned Coach on the session. These recommendations are not connected
+to inventory management. Admins manage courses and sessions; members can
+reserve available sessions, view their own reservations, and cancel or move
+them. Reservations close 24 hours before a session starts. Admins can view
+and manage all reservations; Coaches can view reservations only for their
+assigned sessions. Admins and members see upcoming sessions by default and
+can filter by date. Timetable suggestions are deterministic, rule-based drafts
+that check scheduled room conflicts (and coach conflicts when a coach subject
+is selected). An administrator must approve a draft to create the session.
+The assistant is not connected to a local LLM or a persisted room-capacity
+catalog.
+
 Keycloak credential validation and invalid-credential messages stay on the
 Keycloak-hosted login page. The realm uses a small Smart Gym CSS theme. SMTP
 is not configured; password-recovery email is intentionally disabled and is
@@ -73,9 +92,11 @@ not operational.
 
 The Compose stack routes `/api/membership`, `/api/courses`, `/api/training`,
 and `/api/nutrition` to the secured business API while preserving the full
-prefix. The latter three route prefixes are security-protected, ready for
-their module services, and do not claim to implement those business features
-yet.
+prefix. The Courses API provides the M2 course, session, and reservation
+operations. Legacy equipment-inventory persistence and endpoints are retained
+but are not exposed in the Courses UI; course equipment fields are
+recommendations, not inventory links. Training and Nutrition remain
+security-protected routes without business-feature implementations.
 
 The Keycloak client allowlist contains only the Angular root and the exact
 SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`, `/nutrition`,

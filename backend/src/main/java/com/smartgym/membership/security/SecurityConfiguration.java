@@ -30,7 +30,10 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfiguration {
     private static final Set<String> APPLICATION_ROLES = Set.of("ADMIN", "COACH", "MEMBER");
 

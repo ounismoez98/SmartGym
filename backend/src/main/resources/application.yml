@@ -13,8 +13,8 @@ spring:
 
 app:
   security:
-    issuer-uri: ${APP_SECURITY_ISSUER_URI:http://localhost:8080/realms/smart-gym}
-    jwk-set-uri: ${APP_SECURITY_JWK_SET_URI:http://localhost:8080/realms/smart-gym/protocol/openid-connect/certs}
+    issuer-uri: ${APP_SECURITY_ISSUER_URI:http://localhost:8082/realms/smart-gym}
+    jwk-set-uri: ${APP_SECURITY_JWK_SET_URI:http://localhost:8082/realms/smart-gym/protocol/openid-connect/certs}
     audience: smart-gym-api
   provisioning:
     token: ${APP_PROVISIONING_TOKEN:}
