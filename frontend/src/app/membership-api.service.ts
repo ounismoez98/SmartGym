@@ -33,6 +33,8 @@ export interface MemberProfile {
   phone: string | null;
   birthDate: string | null;
   status: 'ACTIVE' | 'INACTIVE';
+  username: string;
+  displayName: string;
 }
 
 export interface SubscriptionPlan {
@@ -81,6 +83,8 @@ export interface EmployeeProfile {
   jobTitle: string;
   hireDate: string | null;
   status: 'ACTIVE' | 'INACTIVE';
+  username: string;
+  displayName: string;
 }
 
 export interface ReminderDraft {
@@ -127,14 +131,16 @@ export class MembershipApiService {
   }
 
   createMember(request: {
-    keycloakUserId: string;
+    username: string;
+    temporaryPassword: string;
     firstName: string;
     lastName: string;
     email: string;
     phone?: string;
     birthDate?: string;
   }) {
-    return this.http.post<MemberProfile>('/api/membership/members', request);
+    return this.http.post<{ username: string; profile: MemberProfile }>(
+      '/api/membership/accounts/members', request);
   }
 
   updateMember(id: string, request: Partial<Pick<MemberProfile, 'firstName' | 'lastName' | 'email' | 'phone' | 'birthDate'>>) {
@@ -227,14 +233,16 @@ export class MembershipApiService {
   }
 
   createEmployee(request: {
-    keycloakUserId: string;
+    username: string;
+    temporaryPassword: string;
     firstName: string;
     lastName: string;
     email: string;
     jobTitle: string;
     hireDate?: string;
   }) {
-    return this.http.post<EmployeeProfile>('/api/membership/employees', request);
+    return this.http.post<{ username: string; profile: EmployeeProfile }>(
+      '/api/membership/accounts/employees', request);
   }
 
   updateEmployee(id: string, request: {

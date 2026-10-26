@@ -83,6 +83,12 @@ public class EmployeeService {
     }
 
     public EmployeeResponse create(EmployeeCreateRequest request, Authentication authentication) {
+        String keycloakUserId = request.keycloakUserId().toString().toLowerCase(Locale.ROOT);
+        return create(request, authentication, keycloakUserId);
+    }
+
+    public EmployeeResponse create(
+            EmployeeCreateRequest request, Authentication authentication, String username) {
         String subject = request.keycloakUserId().toString().toLowerCase(Locale.ROOT);
         if (employeeRepository.findByKeycloakUserId(subject).isPresent()) {
             throw conflict("The Keycloak user is already linked to an employee.");
@@ -93,7 +99,7 @@ public class EmployeeService {
         Employee employee = new Employee(
                 UUID.randomUUID(),
                 subject,
-                subject,
+                username,
                 displayName(request.firstName(), request.lastName()),
                 request.firstName().trim(),
                 request.lastName().trim(),

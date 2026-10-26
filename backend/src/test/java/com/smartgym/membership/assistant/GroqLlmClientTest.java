@@ -79,6 +79,34 @@ class GroqLlmClientTest {
     }
 
     @Test
+    void reportsInvalidProviderCredentialsWithoutExposingProviderResponse() throws IOException {
+        startServer(exchange -> respond(exchange, 401, "{\"error\":\"private provider detail\"}"));
+
+        assertThatThrownBy(() -> client(5).complete("system", "user", false))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    var responseError = (ResponseStatusException) error;
+                    assertThat(responseError.getStatusCode().value()).isEqualTo(503);
+                    assertThat(responseError.getReason()).contains("LLM_API_KEY");
+                    assertThat(responseError.getReason()).doesNotContain("private provider detail");
+                });
+    }
+
+    @Test
+    void reportsMissingProviderModelOrEndpointWithoutExposingProviderResponse() throws IOException {
+        startServer(exchange -> respond(exchange, 404, "{\"error\":\"private provider detail\"}"));
+
+        assertThatThrownBy(() -> client(5).complete("system", "user", false))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    var responseError = (ResponseStatusException) error;
+                    assertThat(responseError.getStatusCode().value()).isEqualTo(502);
+                    assertThat(responseError.getReason()).contains("LLM_MODEL", "LLM_BASE_URL");
+                    assertThat(responseError.getReason()).doesNotContain("private provider detail");
+                });
+    }
+
+    @Test
     void reportsProviderTimeoutAsClearAdminError() throws IOException {
         startServer(exchange -> {
             try {

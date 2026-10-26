@@ -7,6 +7,7 @@ $requiredVariables = @(
     "DEV_COACH_PASSWORD",
     "DEV_MEMBER_A_PASSWORD",
     "DEV_MEMBER_B_PASSWORD",
+    "KEYCLOAK_PROVISIONER_SECRET",
     "PROVISIONING_TOKEN"
 )
 
@@ -30,6 +31,84 @@ $adminTokenResponse = Invoke-RestMethod `
         password = $env:KEYCLOAK_ADMIN_PASSWORD
     }
 $headers = @{ Authorization = "Bearer $($adminTokenResponse.access_token)" }
+
+$provisionerClients = Invoke-RestMethod `
+    -Method Get `
+    -Uri "$keycloakBase/admin/realms/$realm/clients?clientId=smartgym-provisioner" `
+    -Headers $headers
+if ($provisionerClients.Count -eq 0) {
+    $clientBody = @{
+        clientId = "smartgym-provisioner"
+        name = "Smart Gym user provisioning service"
+        enabled = $true
+        protocol = "openid-connect"
+        publicClient = $false
+        clientAuthenticatorType = "client-secret"
+        secret = $env:KEYCLOAK_PROVISIONER_SECRET
+        standardFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $true
+    } | ConvertTo-Json -Depth 6
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri "$keycloakBase/admin/realms/$realm/clients" `
+        -Headers $headers `
+        -ContentType "application/json" `
+        -Body $clientBody
+    $provisionerClients = Invoke-RestMethod `
+        -Method Get `
+        -Uri "$keycloakBase/admin/realms/$realm/clients?clientId=smartgym-provisioner" `
+        -Headers $headers
+} else {
+    $provisionerClient = $provisionerClients | Select-Object -First 1
+    $clientBody = @{
+        id = $provisionerClient.id
+        clientId = "smartgym-provisioner"
+        name = "Smart Gym user provisioning service"
+        enabled = $true
+        protocol = "openid-connect"
+        publicClient = $false
+        clientAuthenticatorType = "client-secret"
+        secret = $env:KEYCLOAK_PROVISIONER_SECRET
+        standardFlowEnabled = $false
+        directAccessGrantsEnabled = $false
+        serviceAccountsEnabled = $true
+    } | ConvertTo-Json -Depth 6
+    Invoke-RestMethod `
+        -Method Put `
+        -Uri "$keycloakBase/admin/realms/$realm/clients/$($provisionerClient.id)" `
+        -Headers $headers `
+        -ContentType "application/json" `
+        -Body $clientBody
+    Invoke-RestMethod `
+        -Method Put `
+        -Uri "$keycloakBase/admin/realms/$realm/clients/$($provisionerClient.id)/client-secret" `
+        -Headers $headers `
+        -ContentType "application/json" `
+        -Body (@{ value = $env:KEYCLOAK_PROVISIONER_SECRET } | ConvertTo-Json)
+}
+
+$provisionerClient = $provisionerClients | Select-Object -First 1
+$serviceAccount = Invoke-RestMethod `
+    -Method Get `
+    -Uri "$keycloakBase/admin/realms/$realm/clients/$($provisionerClient.id)/service-account-user" `
+    -Headers $headers
+$realmManagement = Invoke-RestMethod `
+    -Method Get `
+    -Uri "$keycloakBase/admin/realms/$realm/clients?clientId=realm-management" `
+    -Headers $headers | Select-Object -First 1
+$managementRoles = @("manage-users", "view-users", "view-realm") | ForEach-Object {
+    Invoke-RestMethod `
+        -Method Get `
+        -Uri "$keycloakBase/admin/realms/$realm/clients/$($realmManagement.id)/roles/$_" `
+        -Headers $headers
+}
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "$keycloakBase/admin/realms/$realm/users/$($serviceAccount.id)/role-mappings/clients/$($realmManagement.id)" `
+    -Headers $headers `
+    -ContentType "application/json" `
+    -Body (ConvertTo-Json -InputObject @($managementRoles) -Depth 6)
 
 $accounts = @(
     @{ Username = "gym-admin"; Name = "Gym Administrator"; FirstName = "Gym"; LastName = "Administrator"; Email = "gym-admin@smartgym.local"; Role = "ADMIN"; Password = $env:DEV_ADMIN_PASSWORD; ProfileType = "EMPLOYEE" },

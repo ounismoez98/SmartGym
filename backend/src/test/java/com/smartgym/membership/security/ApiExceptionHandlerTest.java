@@ -34,4 +34,18 @@ class ApiExceptionHandlerTest {
                 "The requested resource was not found.",
                 Map.of()));
     }
+
+    @Test
+    void exposesOnlyCuratedLlmProviderTroubleshootingReasons() {
+        var llmResponse = handler.handleResponseStatus(
+                new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "LLM provider authentication failed. Replace the configured LLM_API_KEY."));
+        var unrelatedResponse = handler.handleResponseStatus(
+                new ResponseStatusException(HttpStatus.BAD_GATEWAY, "private internal detail"));
+
+        assertThat(llmResponse.getBody().message())
+                .isEqualTo("LLM provider authentication failed. Replace the configured LLM_API_KEY.");
+        assertThat(unrelatedResponse.getBody().message()).isEqualTo("The request could not be completed.");
+    }
 }

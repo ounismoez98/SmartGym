@@ -87,6 +87,12 @@ public class MemberService {
 
     public MemberResponse create(MemberCreateRequest request, Authentication authentication) {
         String keycloakUserId = request.keycloakUserId().toString().toLowerCase(java.util.Locale.ROOT);
+        return create(request, authentication, keycloakUserId);
+    }
+
+    public MemberResponse create(
+            MemberCreateRequest request, Authentication authentication, String username) {
+        String keycloakUserId = request.keycloakUserId().toString().toLowerCase(java.util.Locale.ROOT);
         if (memberRepository.findByKeycloakUserId(keycloakUserId).isPresent()) {
             throw conflict("The Keycloak user is already linked to a member.");
         }
@@ -97,7 +103,7 @@ public class MemberService {
         Member member = new Member(
                 UUID.randomUUID(),
                 keycloakUserId,
-                keycloakUserId,
+                username,
                 displayName(request.firstName(), request.lastName(), keycloakUserId),
                 request.firstName(),
                 request.lastName(),

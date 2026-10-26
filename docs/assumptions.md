@@ -36,7 +36,13 @@
   existing migrations.
 - The development profile enables Flyway out-of-order execution only to let
   persistent local volumes that already applied the V100 seed receive later
-  V4-V7 migrations. Production does not enable out-of-order migrations.
+  V4-V13 migrations. Membership migrations retain V1-V7; nutrition and
+  feedback migrations use V8-V13 to keep the merged history unique.
+  Production does not enable out-of-order migrations.
+- A before-each-migrate SQL callback normalizes the legacy coach-assignment
+  unique constraint name for databases created before Flyway history existed.
+  It only changes the legacy constraint while `ended_at` is absent; the V3
+  assignment-history migration replaces it with the active-assignment index.
 - The OpenAPI JSON document is intentionally public for API discovery;
   business endpoints remain protected by bearer JWT validation and
   authorization.

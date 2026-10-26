@@ -47,7 +47,8 @@ class PostgresMigrationTest {
         assertThat(jdbc.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
-                .contains("1", "2", "3", "4", "5", "6", "7", "100");
+                .contains("1", "2", "3", "4", "5", "6", "7",
+                        "8", "9", "10", "11", "12", "13", "100");
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM subscription_plan", Integer.class)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(1);

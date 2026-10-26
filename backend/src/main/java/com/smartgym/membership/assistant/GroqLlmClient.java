@@ -61,6 +61,7 @@ public class GroqLlmClient implements LlmClient {
                 }
                 return response.choices().get(0).message().content();
             } catch (RestClientResponseException exception) {
+                int providerStatus = exception.getStatusCode().value();
                 if (exception.getStatusCode().value() == 429 && attempt == 0) {
                     pauseBeforeRetry();
                     continue;
@@ -68,6 +69,21 @@ public class GroqLlmClient implements LlmClient {
                 if (exception.getStatusCode().value() == 429) {
                     throw new ResponseStatusException(
                             HttpStatusCode.valueOf(503), "LLM provider rate limit persisted after one retry.");
+                }
+                if (providerStatus == 401 || providerStatus == 403) {
+                    throw new ResponseStatusException(
+                            HttpStatusCode.valueOf(503),
+                            "LLM provider authentication failed. Replace the configured LLM_API_KEY.");
+                }
+                if (providerStatus == 404) {
+                    throw new ResponseStatusException(
+                            HttpStatusCode.valueOf(502),
+                            "LLM model or API endpoint was not found. Check LLM_MODEL and LLM_BASE_URL.");
+                }
+                if (providerStatus == 400) {
+                    throw new ResponseStatusException(
+                            HttpStatusCode.valueOf(502),
+                            "LLM provider rejected this request format. Check model compatibility.");
                 }
                 if (exception.getStatusCode().is5xxServerError()) {
                     throw new ResponseStatusException(

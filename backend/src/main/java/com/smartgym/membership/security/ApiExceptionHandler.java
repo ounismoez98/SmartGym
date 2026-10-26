@@ -22,7 +22,18 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     ResponseEntity<ApiErrorResponse> handleResponseStatus(ResponseStatusException exception) {
         HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
-        return response(status, status.name(), messageFor(status), Map.of());
+        String reason = exception.getReason();
+        String message = isSafeLlmProviderMessage(reason)
+                ? reason
+                : messageFor(status);
+        return response(status, status.name(), message, Map.of());
+    }
+
+    private static boolean isSafeLlmProviderMessage(String reason) {
+        return reason != null
+                && (reason.startsWith("LLM provider authentication failed.")
+                        || reason.startsWith("LLM model or API endpoint was not found.")
+                        || reason.startsWith("LLM provider rejected this request format."));
     }
 
     @ExceptionHandler({

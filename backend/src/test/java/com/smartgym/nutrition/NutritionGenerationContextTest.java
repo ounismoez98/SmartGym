@@ -3,10 +3,12 @@ package com.smartgym.nutrition;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartgym.membership.MembershipApiApplication;
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignment;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +47,8 @@ class NutritionGenerationContextTest {
     private static final String MEMBER_SUBJECT = "generation-context-member";
     private static final String OTHER_MEMBER_SUBJECT = "generation-context-other-member";
     private static final String COACH_SUBJECT = "generation-context-coach";
+    private UUID memberProfileId;
+    private UUID otherMemberProfileId;
 
     @Autowired
     private MockMvc mockMvc;
@@ -71,7 +75,10 @@ class NutritionGenerationContextTest {
     private FoodJournalRepository foodJournalRepository;
 
     @Autowired
-    private BusinessProfileRepository profileRepository;
+    private MemberRepository memberRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
 
     @Autowired
     private CoachAssignmentRepository assignmentRepository;
@@ -89,16 +96,17 @@ class NutritionGenerationContextTest {
         nutritionProfileRepository.deleteAll();
         foodRepository.deleteAll();
         assignmentRepository.deleteAll();
-        profileRepository.deleteAll();
+        memberRepository.deleteAll();
+        employeeRepository.deleteAll();
 
-        BusinessProfile member = new BusinessProfile(MEMBER_SUBJECT, "generation-member", "Generation Member");
-        member.ensureMemberProfile();
-        BusinessProfile otherMember = new BusinessProfile(
-                OTHER_MEMBER_SUBJECT, "generation-other-member", "Other Member");
-        otherMember.ensureMemberProfile();
-        BusinessProfile coach = new BusinessProfile(COACH_SUBJECT, "generation-coach", "Generation Coach");
-        coach.ensureEmployeeProfile();
-        profileRepository.saveAll(List.of(member, otherMember, coach));
+        Member member = new Member(UUID.randomUUID(), MEMBER_SUBJECT, "generation-member", "Generation Member");
+        Member otherMember = new Member(
+                UUID.randomUUID(), OTHER_MEMBER_SUBJECT, "generation-other-member", "Other Member");
+        memberProfileId = member.getId();
+        otherMemberProfileId = otherMember.getId();
+        memberRepository.saveAll(List.of(member, otherMember));
+        employeeRepository.save(new Employee(
+                UUID.randomUUID(), COACH_SUBJECT, "generation-coach", "Generation Coach"));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_SUBJECT));
         nutritionProfileRepository.save(new NutritionProfile(MEMBER_SUBJECT, "Member profile",
                 "maintenance", "balanced", "moderate", 30, 170.0, 70.0, 2100));
@@ -214,7 +222,7 @@ class NutritionGenerationContextTest {
         String restrictedCoachEdit = mealPlanUpdatePayload(
                 "Oat breakfast", "Peanut butter oats.", foodId);
         mockMvc.perform(put("/api/nutrition/coach/members/{memberId}/meal-plans/{mealPlanId}",
-                        profileRepository.findById(MEMBER_SUBJECT).orElseThrow().getMemberProfileId(), mealPlanId)
+                        memberProfileId, mealPlanId)
                         .with(coach())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(restrictedCoachEdit))
@@ -222,7 +230,7 @@ class NutritionGenerationContextTest {
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("restriction")));
 
         mockMvc.perform(put("/api/nutrition/coach/members/{memberId}/meal-plans/{mealPlanId}",
-                        profileRepository.findById(MEMBER_SUBJECT).orElseThrow().getMemberProfileId(), mealPlanId)
+                        memberProfileId, mealPlanId)
                         .with(coach())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(mealPlanUpdatePayload(

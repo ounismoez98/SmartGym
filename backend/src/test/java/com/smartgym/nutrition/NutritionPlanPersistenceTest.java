@@ -2,10 +2,12 @@ package com.smartgym.nutrition;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartgym.membership.MembershipApiApplication;
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignment;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -75,7 +78,10 @@ class NutritionPlanPersistenceTest {
     private FoodRepository foodRepository;
 
     @Autowired
-    private BusinessProfileRepository businessProfileRepository;
+    private MemberRepository memberRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
 
     @Autowired
     private CoachAssignmentRepository coachAssignmentRepository;
@@ -84,6 +90,7 @@ class NutritionPlanPersistenceTest {
     private LocalLlmMealPlanAssistant assistant;
 
     private java.util.UUID memberProfileId;
+    private java.util.UUID otherMemberProfileId;
     private long savedFoodId;
 
     @BeforeEach
@@ -94,16 +101,15 @@ class NutritionPlanPersistenceTest {
         contextRepository.deleteAll();
         nutritionProfileRepository.deleteAll();
         coachAssignmentRepository.deleteAll();
-        businessProfileRepository.deleteAll();
+        memberRepository.deleteAll();
+        employeeRepository.deleteAll();
 
-        BusinessProfile member = new BusinessProfile(MEMBER, "persistent-member", "Persistent Member");
-        member.ensureMemberProfile();
-        memberProfileId = member.getMemberProfileId();
-        BusinessProfile other = new BusinessProfile(OTHER_MEMBER, "persistent-other", "Other Member");
-        other.ensureMemberProfile();
-        BusinessProfile coach = new BusinessProfile(COACH, "persistent-coach", "Coach");
-        coach.ensureEmployeeProfile();
-        businessProfileRepository.saveAll(List.of(member, other, coach));
+        Member member = new Member(UUID.randomUUID(), MEMBER, "persistent-member", "Persistent Member");
+        memberProfileId = member.getId();
+        Member other = new Member(UUID.randomUUID(), OTHER_MEMBER, "persistent-other", "Other Member");
+        otherMemberProfileId = other.getId();
+        memberRepository.saveAll(List.of(member, other));
+        employeeRepository.save(new Employee(UUID.randomUUID(), COACH, "persistent-coach", "Coach"));
         coachAssignmentRepository.save(new CoachAssignment(COACH, MEMBER));
         NutritionProfile profile = new NutritionProfile(MEMBER, "Member profile", "maintenance",
                 "balanced", "moderate", 32, 170.0, 70.0, 2100);
@@ -338,7 +344,7 @@ class NutritionPlanPersistenceTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].id").value(saved.id()));
         mockMvc.perform(get("/api/nutrition/coach/members/{memberProfileId}/plans",
-                        businessProfileRepository.findById(OTHER_MEMBER).orElseThrow().getMemberProfileId())
+                        otherMemberProfileId)
                         .with(coach()))
                 .andExpect(status().isForbidden());
         mockMvc.perform(put("/api/nutrition/coach/members/{memberProfileId}/plans/{planId}/days/{date}/meals/{mealId}",

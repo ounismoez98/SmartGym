@@ -1,10 +1,12 @@
 package com.smartgym.nutrition;
 
 import com.smartgym.membership.MembershipApiApplication;
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
 import com.smartgym.membership.profile.CoachAssignment;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
+import com.smartgym.membership.profile.Employee;
+import com.smartgym.membership.profile.EmployeeRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,7 +61,10 @@ class CoachNutritionControllerTest {
     private MealPlanGenerationContextRepository generationContextRepository;
 
     @Autowired
-    private BusinessProfileRepository profileRepository;
+    private MemberRepository memberRepository;
+
+    @Autowired
+    private EmployeeRepository employeeRepository;
 
     @Autowired
     private CoachAssignmentRepository assignmentRepository;
@@ -73,17 +78,15 @@ class CoachNutritionControllerTest {
         nutritionProfileRepository.deleteAll();
         foodRepository.deleteAll();
         assignmentRepository.deleteAll();
-        profileRepository.deleteAll();
+        memberRepository.deleteAll();
+        employeeRepository.deleteAll();
 
-        BusinessProfile memberA = new BusinessProfile(MEMBER_A_SUBJECT, "coach-member-a", "Member A");
-        memberA.ensureMemberProfile();
-        memberAId = memberA.getMemberProfileId();
-        BusinessProfile memberB = new BusinessProfile(MEMBER_B_SUBJECT, "coach-member-b", "Member B");
-        memberB.ensureMemberProfile();
-        memberBId = memberB.getMemberProfileId();
-        BusinessProfile coach = new BusinessProfile(COACH_SUBJECT, "coach", "Coach");
-        coach.ensureEmployeeProfile();
-        profileRepository.saveAll(List.of(memberA, memberB, coach));
+        Member memberA = new Member(UUID.randomUUID(), MEMBER_A_SUBJECT, "coach-member-a", "Member A");
+        memberAId = memberA.getId();
+        Member memberB = new Member(UUID.randomUUID(), MEMBER_B_SUBJECT, "coach-member-b", "Member B");
+        memberBId = memberB.getId();
+        memberRepository.saveAll(List.of(memberA, memberB));
+        employeeRepository.save(new Employee(UUID.randomUUID(), COACH_SUBJECT, "coach", "Coach"));
         assignmentRepository.save(new CoachAssignment(COACH_SUBJECT, MEMBER_A_SUBJECT));
     }
 

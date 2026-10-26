@@ -16,7 +16,9 @@ public record MemberResponse(
         LocalDate birthDate,
         Member.Status status,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String username,
+        String displayName) {
     public static MemberResponse from(Member member) {
         return new MemberResponse(
                 member.getId(),
@@ -28,6 +30,8 @@ public record MemberResponse(
                 member.getBirthDate(),
                 member.getStatus(),
                 member.getCreatedAt(),
-                member.getUpdatedAt());
+                member.getUpdatedAt(),
+                member.getUsername(),
+                member.getDisplayName());
     }
 }

@@ -1,7 +1,7 @@
 package com.smartgym.nutrition;
 
-import com.smartgym.membership.profile.BusinessProfile;
-import com.smartgym.membership.profile.BusinessProfileRepository;
+import com.smartgym.membership.profile.Member;
+import com.smartgym.membership.profile.MemberRepository;
 import com.smartgym.membership.profile.CoachAssignmentRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,15 +19,15 @@ import java.time.LocalDate;
 @RequestMapping("/api/nutrition/coach")
 public class CoachNutritionController {
     private final NutritionService nutritionService;
-    private final BusinessProfileRepository profileRepository;
+    private final MemberRepository memberRepository;
     private final CoachAssignmentRepository assignmentRepository;
 
     public CoachNutritionController(
             NutritionService nutritionService,
-            BusinessProfileRepository profileRepository,
+            MemberRepository memberRepository,
             CoachAssignmentRepository assignmentRepository) {
         this.nutritionService = nutritionService;
-        this.profileRepository = profileRepository;
+        this.memberRepository = memberRepository;
         this.assignmentRepository = assignmentRepository;
     }
 
@@ -104,12 +104,13 @@ public class CoachNutritionController {
     }
 
     private String assignedMemberSubject(Jwt jwt, UUID memberProfileId) {
-        BusinessProfile member = profileRepository.findByMemberProfileId(memberProfileId)
+        Member member = memberRepository.findById(memberProfileId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Member profile not found."));
-        if (!assignmentRepository.existsByCoachSubjectAndMemberSubject(jwt.getSubject(), member.getSubject())) {
+        if (!assignmentRepository.existsByCoachSubjectIgnoreCaseAndMemberSubjectIgnoreCaseAndEndedAtIsNull(
+                jwt.getSubject(), member.getKeycloakUserId())) {
             throw new AccessDeniedException("This member is not assigned to your coach account.");
         }
-        return member.getSubject();
+        return member.getKeycloakUserId();
     }
 
     private static FoodResponse toResponse(Food food) {

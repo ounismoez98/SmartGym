@@ -34,7 +34,8 @@ export class MembershipComponent implements OnInit {
     status: ''
   });
   readonly memberCreateForm = this.formBuilder.nonNullable.group({
-    keycloakUserId: ['', [Validators.required, Validators.pattern(/^[0-9a-f-]{36}$/i)]],
+    username: ['', [Validators.required, Validators.pattern(/^[A-Za-z0-9._-]+$/)]],
+    temporaryPassword: ['', [Validators.required, Validators.minLength(12), Validators.maxLength(72)]],
     firstName: ['', Validators.required],
     lastName: ['', Validators.required],
     email: ['', [Validators.required, Validators.email]],
@@ -83,7 +84,8 @@ export class MembershipComponent implements OnInit {
     reason: ['', Validators.required]
   });
   readonly employeeCreateForm = this.formBuilder.nonNullable.group({
-    keycloakUserId: ['', [Validators.required, Validators.pattern(/^[0-9a-f-]{36}$/i)]],
+    username: ['', [Validators.required, Validators.pattern(/^[A-Za-z0-9._-]+$/)]],
+    temporaryPassword: ['', [Validators.required, Validators.minLength(12), Validators.maxLength(72)]],
     firstName: ['', Validators.required],
     lastName: ['', Validators.required],
     email: ['', [Validators.required, Validators.email]],
@@ -191,8 +193,11 @@ export class MembershipComponent implements OnInit {
       ...value,
       phone: value.phone || undefined,
       birthDate: value.birthDate || undefined
-    }), 'Member created.', () => {
-      this.memberCreateForm.reset({ keycloakUserId: '', firstName: '', lastName: '', email: '', phone: '', birthDate: '' });
+    }), 'Member login account and profile created. The user must change the temporary password at first sign-in.', (account) => {
+      this.memberCreateForm.reset({
+        username: '', temporaryPassword: '', firstName: '', lastName: '', email: '', phone: '', birthDate: ''
+      });
+      this.successMessage = `Member account "${account.username}" created. Its Keycloak ID was linked automatically.`;
       this.searchMembers();
     });
   }
@@ -331,10 +336,12 @@ export class MembershipComponent implements OnInit {
   createEmployee(): void {
     if (!this.isAdmin || this.employeeCreateForm.invalid) return;
     const value = this.employeeCreateForm.getRawValue();
-    this.mutate(this.api.createEmployee({ ...value, hireDate: value.hireDate || undefined }), 'Employee created.', () => {
+    this.mutate(this.api.createEmployee({ ...value, hireDate: value.hireDate || undefined }),
+      'Coach login account and employee profile created. The user must change the temporary password at first sign-in.', (account) => {
       this.employeeCreateForm.reset({
-        keycloakUserId: '', firstName: '', lastName: '', email: '', jobTitle: '', hireDate: ''
+        username: '', temporaryPassword: '', firstName: '', lastName: '', email: '', jobTitle: '', hireDate: ''
       });
+      this.successMessage = `Coach account "${account.username}" created. Its Keycloak ID was linked automatically.`;
       this.loadEmployees();
     });
   }
@@ -439,7 +446,15 @@ export class MembershipComponent implements OnInit {
 
   memberName(memberId: string): string {
     const member = this.members.find((entry) => entry.id === memberId);
-    return member ? `${member.firstName} ${member.lastName}` : memberId;
+    return member ? this.memberDisplayName(member) : memberId;
+  }
+
+  memberDisplayName(member: MemberProfile): string {
+    return [member.firstName, member.lastName].filter(Boolean).join(' ') || member.displayName || member.username;
+  }
+
+  employeeDisplayName(employee: EmployeeProfile): string {
+    return [employee.firstName, employee.lastName].filter(Boolean).join(' ') || employee.displayName || employee.username;
   }
 
   private loadInitialData(): void {

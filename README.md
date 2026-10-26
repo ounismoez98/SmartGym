@@ -63,6 +63,7 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | --- | --- | --- |
    | `KEYCLOAK_ADMIN_USERNAME` | Keycloak local administrator username | Yes |
    | `KEYCLOAK_ADMIN_PASSWORD` | Keycloak local administrator password | Yes |
+   | `KEYCLOAK_PROVISIONER_SECRET` | Secret for the API's limited Keycloak account-provisioning client | Yes |
    | `POSTGRES_PASSWORD` | Password for the local PostgreSQL databases | Yes |
    | `PROVISIONING_TOKEN` | Token for the development-only profile provisioning API | Yes |
    | `DEV_ADMIN_PASSWORD` | Local-only password for `gym-admin` | Provisioning script |
@@ -72,9 +73,16 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | `RABBITMQ_USER` | RabbitMQ username | Yes |
    | `RABBITMQ_PASSWORD` | RabbitMQ password | Yes |
    | `LLM_BASE_URL` | OpenAI-compatible API base URL; defaults to Groq | No |
-   | `LLM_MODEL` | Groq model ID; defaults to `llama-3.3-70b-versatile` | No |
+   | `LLM_MODEL` | Groq model ID; defaults to `openai/gpt-oss-20b` | No |
    | `LLM_API_KEY` | Groq API key; replace the placeholder with a locally stored key | Yes |
    | `LLM_TIMEOUT_SECONDS` | LLM request timeout in seconds; defaults to `30` | No |
+
+If the administrative assistant reports a provider error, its response
+identifies whether the configured key was rejected or the model/API endpoint
+was not found. Replace revoked or exposed keys in the ignored `.env`, confirm
+`LLM_MODEL` and `LLM_BASE_URL` match the selected provider, and recreate the
+API container. Never put provider response bodies or API keys in tracked files
+or logs.
 
    Generate a local provisioning token with:
 
@@ -130,6 +138,17 @@ SPA routes (`/dashboard`, `/membership`, `/courses`, `/training`, `/nutrition`,
 redirect is exactly `http://localhost:8088/`, and the allowed web origin is
 exactly `http://localhost:8088`.
 
+Member and employee account creation is available to administrators from the
+Membership screen. It creates the Keycloak login, assigns the `MEMBER` or
+`COACH` role, and links the Keycloak-generated user ID to the matching profile.
+Set a unique local `KEYCLOAK_PROVISIONER_SECRET` in `.env` before starting the
+stack, then run `scripts/provision-dev.ps1` with the required local
+administrator and development-account variables in the PowerShell session.
+The script creates the confidential `smartgym-provisioner` client and grants
+only the user-management roles required by the API. Newly created users must
+change their temporary password at first login. Do not use the Keycloak admin
+password as the provisioner secret.
+
 ## Authentication and authorization
 
 - The SPA uses the maintained official `keycloak-js` adapter with
@@ -166,6 +185,11 @@ exactly `http://localhost:8088`.
   `POST` (ADMIN), paginated/filterable `GET` list (ADMIN), `GET /{id}`
   (ADMIN or the employee's own COACH profile), `PUT /{id}` (ADMIN), and
   `POST /{id}/deactivate` (ADMIN). There is no employee `DELETE` endpoint.
+- Account-creation endpoints under `/api/membership/accounts`: `POST /members`
+  and `POST /employees` are ADMIN-only. Each request includes a username,
+  temporary password, and profile details; the server creates and assigns the
+  Keycloak account before linking its generated subject to the profile. If
+  profile creation fails, the newly created Keycloak account is removed.
 - Coach assignment endpoints: `POST
   /api/membership/employees/{coachId}/members/{memberId}` (ADMIN) assigns an
   active coach and member; `POST
@@ -258,11 +282,10 @@ record. These roles can overlap.
 ## Login acceptance status
 
 Backend API tests use MockMvc, simulated JWTs, and H2; they do not verify live
-Keycloak signatures. The latest recorded checks in this workspace were run on
-2026-10-25: Maven reported 111 tests, with 0 failures and 4 Testcontainers
-tests skipped; Angular unit tests passed 5 tests; and the Chromium Playwright
-membership E2E passed 1 test. The E2E ran against the local Compose stack with
-a test-only LLM mock and MailHog.
+Keycloak signatures. The latest checks: Maven reported 209 tests with 0
+failures and 10 Docker-dependent tests skipped; Angular unit tests passed 61
+tests; and the authenticated Chromium Playwright membership flow passed
+against local Keycloak, Compose, MailHog, and a test-only LLM mock.
 
 | Acceptance item | Covered by automated test | Browser/Compose check |
 | --- | --- | --- |
@@ -276,9 +299,11 @@ a test-only LLM mock and MailHog.
 | Member A cannot read another member's private record | Yes — MockMvc tests | Yes — Playwright E2E received `403` |
 | Logout ends the application session and protected content is inaccessible | No | not re-verified |
 
-The business CRUD features for M1-M4, SMTP password recovery, production
-HTTPS, and a full browser simulation of token expiry have not been
-implemented or tested in this first authentication delivery.
+The account-provisioning browser flow verifies member and coach creation,
+Keycloak-generated ID linking, and the required password change at first
+login. The assistant explanation flow was checked against the local mock LLM;
+no live Groq request was made. SMTP password recovery, production HTTPS, and
+a full browser simulation of token expiry are not implemented.
 
 ## Project status
 
@@ -301,15 +326,23 @@ Development sample plans and policies are loaded only by the `dev` profile.
 In the `dev` profile only, Flyway permits pending lower-numbered migrations to
 run after the development seed migration, allowing existing local volumes to
 receive migrations added after their initial seed.
+Membership schema changes retain migration versions V1-V7. The nutrition
+baseline and subsequent nutrition/feedback changes use V8-V13 so the merged
+Flyway history has one migration per version. A migration callback also
+normalizes the legacy coach-assignment constraint before V3 when upgrading a
+pre-Flyway development database.
 Current backend tests include MockMvc tests with simulated JWTs and H2, plus
 Testcontainers PostgreSQL migration, active-subscription uniqueness, and
-payment deletion-guard tests. The latest Maven run reported 111 tests: 0
-failures and 4 skipped because Docker-backed Testcontainers tests were not
-executed in that run. Angular unit tests passed 5 tests, and the production
-build passed. The Playwright Chromium scenario passed 1 E2E flow covering the
-admin membership workflow, payment correction history, MailHog confirmation,
-and member ownership denial. The E2E uses a local mock LLM and does not call
-Groq.
+payment deletion-guard tests. The latest full Maven run reported 209 tests:
+0 failures and 10 skipped because Docker-backed integration tests were not
+executed in that run. Separate focused tests cover provisioning Keycloak
+accounts and linking the generated ID to a profile. Additional tests verify
+safe provider diagnostics for rejected keys and unavailable models/endpoints.
+Angular unit tests passed 61 tests, and the production build passed. The
+Playwright Chromium scenario covered the admin membership workflow, Keycloak
+member and coach account creation, first-login password change, assistant
+explanation against the mock LLM, payment correction history, MailHog
+confirmation, and member ownership denial.
 Not verified: Testcontainers against PostgreSQL in the latest Maven run,
 Groq against the real remote provider, and a manual browser review of all
 screens and roles. The automated E2E run is not a substitute for that manual
@@ -341,10 +374,10 @@ npm --prefix frontend run test:e2e
 
 If credentials are missing, the test reports all required password variable
 names without displaying their values. Do not put credentials in tracked
-files. The E2E test creates a membership profile using a random Keycloak
-subject, since account creation is intentionally not part of the membership
-API. It then checks that the existing `member-a` identity receives `403` when
-requesting that profile. Stop the test stack without deleting local data with:
+files. The E2E test creates a member login through the Membership UI, confirms
+that Keycloak's generated ID is linked to the profile, then checks that the
+existing `member-a` identity receives `403` when requesting that profile.
+Stop the test stack without deleting local data with:
 
 ```powershell
 docker compose -f docker-compose.yml -f frontend/e2e/docker-compose.e2e.yml down

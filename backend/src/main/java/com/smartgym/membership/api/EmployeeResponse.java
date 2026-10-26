@@ -16,7 +16,9 @@ public record EmployeeResponse(
         LocalDate hireDate,
         Employee.Status status,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String username,
+        String displayName) {
     public static EmployeeResponse from(Employee employee) {
         return new EmployeeResponse(
                 employee.getId(),
@@ -28,6 +30,8 @@ public record EmployeeResponse(
                 employee.getHireDate(),
                 employee.getStatus(),
                 employee.getCreatedAt(),
-                employee.getUpdatedAt());
+                employee.getUpdatedAt(),
+                employee.getUsername(),
+                employee.getDisplayName());
     }
 }

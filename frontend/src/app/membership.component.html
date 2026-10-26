@@ -32,8 +32,8 @@
         <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>
           <tr *ngFor="let member of members">
-            <td><button class="table-link" type="button" (click)="selectMember(member)">{{ member.firstName }} {{ member.lastName }}</button></td>
-            <td>{{ member.email }}</td><td><span class="status-pill">{{ member.status }}</span></td>
+            <td><button class="table-link" type="button" (click)="selectMember(member)">{{ memberDisplayName(member) }}</button></td>
+            <td>{{ member.email || 'Not provided' }}</td><td><span class="status-pill">{{ member.status }}</span></td>
             <td class="row-actions">
               <button class="button quiet compact" type="button" (click)="selectMember(member)">View / edit</button>
               <button *ngIf="isAdmin && member.status === 'ACTIVE'" class="button quiet compact" type="button" (click)="deactivateMember(member)">Deactivate</button>
@@ -51,9 +51,10 @@
 
     <form *ngIf="isAdmin" [formGroup]="memberCreateForm" (ngSubmit)="createMember()" class="account-card workspace-card">
       <h3>Create member</h3>
-      <p class="muted">Create the membership profile for an existing Keycloak user. This form does not create a Keycloak account.</p>
+      <p class="muted">Creates a login account and member profile together. The account ID is linked automatically, and the member must change the temporary password at first sign-in.</p>
       <div class="form-grid">
-        <label>Keycloak user UUID<input formControlName="keycloakUserId" required></label>
+        <label>Username<input formControlName="username" autocomplete="off" required></label>
+        <label>Temporary password<input type="password" formControlName="temporaryPassword" autocomplete="new-password" minlength="12" required><small>At least 12 characters; the member will change it at first sign-in.</small></label>
         <label>First name<input formControlName="firstName" required></label>
         <label>Last name<input formControlName="lastName" required></label>
         <label>Email<input type="email" formControlName="email" required></label>
@@ -64,7 +65,7 @@
     </form>
 
     <form *ngIf="selectedMember" [formGroup]="memberEditForm" (ngSubmit)="saveMember()" class="account-card workspace-card">
-      <div class="section-heading"><div><p class="eyebrow">PROFILE</p><h3>{{ selectedMember.firstName }} {{ selectedMember.lastName }}</h3></div>
+      <div class="section-heading"><div><p class="eyebrow">PROFILE</p><h3>{{ memberDisplayName(selectedMember) }}</h3></div>
         <button class="button quiet compact" type="button" (click)="selectedMember = null">Close</button>
       </div>
       <div class="form-grid">
@@ -80,8 +81,8 @@
 
   <section *ngIf="activeTab === 'profile'" class="workspace-section">
     <div *ngIf="members[0] as profile" class="account-card workspace-card">
-      <p class="eyebrow">MEMBER PROFILE</p><h2>{{ profile.firstName }} {{ profile.lastName }}</h2>
-      <p>{{ profile.email }} <span *ngIf="profile.phone">· {{ profile.phone }}</span></p>
+      <p class="eyebrow">MEMBER PROFILE</p><h2>{{ memberDisplayName(profile) }}</h2>
+      <p>{{ profile.email || 'Email not provided' }} <span *ngIf="profile.phone">· {{ profile.phone }}</span></p>
       <p>Status: <span class="status-pill">{{ profile.status }}</span></p>
       <button class="button quiet" type="button" (click)="selectMember(profile)">Edit my contact details</button>
     </div>
@@ -93,7 +94,7 @@
     <form *ngIf="isAdmin" [formGroup]="subscriptionCreateForm" (ngSubmit)="createSubscription()" class="account-card workspace-card">
       <h3>Create subscription</h3>
       <div class="form-grid">
-        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }} · {{ member.status }}</option></select></label>
+        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ memberDisplayName(member) }} · {{ member.status }}</option></select></label>
         <label>Active plan<select formControlName="planId" required><option value="">Choose plan</option><option *ngFor="let plan of plans" [value]="plan.id">{{ plan.name }} · {{ formatMoney(plan.priceCents, plan.currency) }}</option></select></label>
       </div>
       <button class="button primary" type="submit" [disabled]="subscriptionCreateForm.invalid || loading">Create subscription</button>
@@ -162,7 +163,7 @@
     <form *ngIf="isAdmin" [formGroup]="paymentCreateForm" (ngSubmit)="createPayment()" class="account-card workspace-card">
       <h3>Record payment</h3>
       <div class="form-grid">
-        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }}</option></select></label>
+        <label>Member<select formControlName="memberId" required><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ memberDisplayName(member) }}</option></select></label>
         <label>Subscription ID (optional)<input formControlName="subscriptionId"></label>
         <label>Amount (cents)<input type="number" min="1" formControlName="amountCents" required></label>
         <label>Currency<input formControlName="currency" required></label>
@@ -220,9 +221,10 @@
     <div class="section-heading"><div><p class="eyebrow">STAFF</p><h2>Employees & coach assignments</h2></div></div>
     <form [formGroup]="employeeCreateForm" (ngSubmit)="createEmployee()" class="account-card workspace-card">
       <h3>Create employee</h3>
-      <p class="muted">The Keycloak account must already exist; this only creates its membership-service profile.</p>
+      <p class="muted">Creates a coach login account and employee profile together. The account ID is linked automatically, and the coach must change the temporary password at first sign-in.</p>
       <div class="form-grid">
-        <label>Keycloak user UUID<input formControlName="keycloakUserId" required></label>
+        <label>Username<input formControlName="username" autocomplete="off" required></label>
+        <label>Temporary password<input type="password" formControlName="temporaryPassword" autocomplete="new-password" minlength="12" required><small>At least 12 characters; the coach will change it at first sign-in.</small></label>
         <label>First name<input formControlName="firstName" required></label><label>Last name<input formControlName="lastName" required></label>
         <label>Email<input type="email" formControlName="email" required></label><label>Job title<input formControlName="jobTitle" required></label>
         <label>Hire date<input type="date" formControlName="hireDate"></label>
@@ -232,15 +234,15 @@
     <div class="table-wrap">
       <table><thead><tr><th>Name</th><th>Title</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody><tr *ngFor="let employee of employees">
-          <td><button class="table-link" type="button" (click)="selectEmployee(employee)">{{ employee.firstName }} {{ employee.lastName }}</button></td>
-          <td>{{ employee.jobTitle }}</td><td>{{ employee.email }}</td><td><span class="status-pill">{{ employee.status }}</span></td>
+          <td><button class="table-link" type="button" (click)="selectEmployee(employee)">{{ employeeDisplayName(employee) }}</button></td>
+          <td>{{ employee.jobTitle || 'Not provided' }}</td><td>{{ employee.email || 'Not provided' }}</td><td><span class="status-pill">{{ employee.status }}</span></td>
           <td class="row-actions"><button class="button quiet compact" type="button" (click)="selectEmployee(employee)">Manage</button>
             <button *ngIf="employee.status === 'ACTIVE'" class="button quiet compact" type="button" (click)="deactivateEmployee(employee)">Deactivate</button></td>
         </tr><tr *ngIf="employees.length === 0"><td colspan="5" class="empty-state">No employees found.</td></tr></tbody>
       </table>
     </div>
     <section *ngIf="selectedEmployee" class="account-card workspace-card">
-      <h3>{{ selectedEmployee.firstName }} {{ selectedEmployee.lastName }}</h3>
+      <h3>{{ employeeDisplayName(selectedEmployee) }}</h3>
       <form [formGroup]="employeeEditForm" (ngSubmit)="saveEmployee()">
         <div class="form-grid"><label>First name<input formControlName="firstName" required></label><label>Last name<input formControlName="lastName" required></label>
           <label>Email<input type="email" formControlName="email" required></label><label>Job title<input formControlName="jobTitle" required></label>
@@ -249,10 +251,10 @@
       </form>
       <h3 class="subheading">Assigned members</h3>
       <form [formGroup]="assignmentForm" (ngSubmit)="assignMember()" class="inline-form">
-        <label>Member<select formControlName="memberId"><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ member.firstName }} {{ member.lastName }}</option></select></label>
+        <label>Member<select formControlName="memberId"><option value="">Choose member</option><option *ngFor="let member of members" [value]="member.id">{{ memberDisplayName(member) }}</option></select></label>
         <button class="button quiet" type="submit" [disabled]="assignmentForm.invalid || loading">Assign member</button>
       </form>
-      <ul class="assigned-list"><li *ngFor="let member of assignedMembers">{{ member.firstName }} {{ member.lastName }} · {{ member.email }}
+      <ul class="assigned-list"><li *ngFor="let member of assignedMembers">{{ memberDisplayName(member) }} · {{ member.email || 'Not provided' }}
         <button class="button quiet compact" type="button" (click)="unassignMember(member)">End assignment</button></li>
         <li *ngIf="assignedMembers.length === 0" class="muted">No active assignments.</li></ul>
     </section>

@@ -32,6 +32,11 @@ async function signIn(page: import('@playwright/test').Page, username: string, p
 
 test('admin manages membership and member access remains owner-scoped', async ({ browser, request }) => {
   const { adminUsername, adminPassword, memberUsername, memberPassword } = e2eCredentials();
+  await expect(async () => {
+    const response = await request.get('http://localhost:8088/api/membership/me');
+    expect(response.status()).toBe(401);
+  }).toPass({ timeout: 60_000 });
+
   const firstName = `E2E${Date.now()}`;
   const lastName = 'Member';
   const email = `e2e-${randomUUID()}@smartgym.local`;
@@ -41,16 +46,53 @@ test('admin manages membership and member access remains owner-scoped', async ({
   await signIn(adminPage, adminUsername, adminPassword);
   await expect(adminPage.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
 
-  await adminPage.getByLabel('Keycloak user UUID', { exact: true }).fill(randomUUID());
+  const username = `e2e-${randomUUID().slice(0, 12)}`;
+  const temporaryPassword = `E2e-${randomUUID()}!`;
+  await adminPage.getByLabel('Username', { exact: true }).fill(username);
+  await adminPage.getByLabel(/Temporary password/).fill(temporaryPassword);
   await adminPage.getByLabel('First name', { exact: true }).fill(firstName);
   await adminPage.getByLabel('Last name', { exact: true }).fill(lastName);
   await adminPage.getByLabel('Email', { exact: true }).fill(email);
   const memberResponsePromise = adminPage.waitForResponse((response) =>
-    response.url().endsWith('/api/membership/members') && response.request().method() === 'POST');
+    response.url().endsWith('/api/membership/accounts/members') && response.request().method() === 'POST');
   await adminPage.getByRole('button', { name: 'Create member', exact: true }).click();
   const memberResponse = await memberResponsePromise;
   expect(memberResponse.ok()).toBeTruthy();
-  const member = await memberResponse.json() as { id: string };
+  const createdAccount = await memberResponse.json() as { username: string; profile: { id: string; keycloakUserId: string } };
+  expect(createdAccount.username).toBe(username);
+  expect(createdAccount.profile.keycloakUserId).toMatch(/^[0-9a-f-]{36}$/i);
+  const member = createdAccount.profile;
+
+  const newMemberContext = await browser.newContext();
+  const newMemberPage = await newMemberContext.newPage();
+  await newMemberPage.goto('/membership');
+  await newMemberPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await newMemberPage.locator('#username').fill(username);
+  await newMemberPage.locator('#password').fill(temporaryPassword);
+  await newMemberPage.locator('#kc-login').click();
+  await expect(newMemberPage.locator('#password-new')).toBeVisible();
+  await expect(newMemberPage.locator('#password-confirm')).toBeVisible();
+  await newMemberContext.close();
+
+  await adminPage.getByRole('button', { name: 'Employees', exact: true }).click();
+  const coachUsername = `e2e-coach-${randomUUID().slice(0, 8)}`;
+  await adminPage.getByLabel('Username', { exact: true }).fill(coachUsername);
+  await adminPage.getByLabel(/Temporary password/).fill(`E2e-${randomUUID()}!`);
+  await adminPage.getByLabel('First name', { exact: true }).fill('E2E');
+  await adminPage.getByLabel('Last name', { exact: true }).fill('Coach');
+  await adminPage.getByLabel('Email', { exact: true }).fill(`e2e-coach-${randomUUID()}@smartgym.local`);
+  await adminPage.getByLabel('Job title', { exact: true }).fill('Personal Trainer');
+  const employeeResponsePromise = adminPage.waitForResponse((response) =>
+    response.url().endsWith('/api/membership/accounts/employees') && response.request().method() === 'POST');
+  await adminPage.getByRole('button', { name: 'Create employee', exact: true }).click();
+  const employeeResponse = await employeeResponsePromise;
+  expect(employeeResponse.ok()).toBeTruthy();
+  const createdEmployee = await employeeResponse.json() as {
+    username: string;
+    profile: { id: string; keycloakUserId: string };
+  };
+  expect(createdEmployee.username).toBe(coachUsername);
+  expect(createdEmployee.profile.keycloakUserId).toMatch(/^[0-9a-f-]{36}$/i);
 
   await adminPage.getByRole('button', { name: 'Members', exact: true }).click();
   await adminPage.getByLabel('Search', { exact: true }).fill(firstName);
@@ -95,6 +137,15 @@ test('admin manages membership and member access remains owner-scoped', async ({
   await expect(correctionHistory).toContainText('Date:');
 
   await adminPage.getByRole('button', { name: 'Assistant', exact: true }).click();
+  await adminPage.getByRole('combobox', { name: 'Plan (optional)', exact: true }).selectOption({ index: 1 });
+  await adminPage.getByLabel('Question', { exact: true }).fill('What does this membership plan include?');
+  const explainResponsePromise = adminPage.waitForResponse((response) =>
+    response.url().endsWith('/api/membership/assistant/explain') && response.request().method() === 'POST');
+  await adminPage.getByRole('button', { name: 'Ask', exact: true }).click();
+  expect((await explainResponsePromise).ok()).toBeTruthy();
+  await expect(adminPage.locator('.assistant-answer'))
+    .toContainText('Mock assistant response based only on supplied test facts.');
+
   await adminPage.getByRole('combobox', { name: 'Subscription', exact: true }).selectOption(subscription.id);
   const reminderResponsePromise = adminPage.waitForResponse((response) =>
     response.url().endsWith('/api/membership/assistant/reminders')
