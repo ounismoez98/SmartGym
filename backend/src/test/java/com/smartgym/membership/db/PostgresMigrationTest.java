@@ -48,13 +48,26 @@ class PostgresMigrationTest {
         assertThat(flyway.info().applied())
                 .extracting(migration -> migration.getVersion().getVersion())
                 .contains("1", "2", "3", "4", "5", "6", "7",
-                        "8", "9", "10", "11", "12", "13", "100");
+                        "8", "9", "10", "11", "12", "13", "14", "15", "100");
 
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM subscription_plan WHERE code IN ('MONTHLY', 'ANNUAL')",
                 Integer.class))
                 .isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gym_policy", Integer.class)).isEqualTo(5);
+        assertThat(jdbc.queryForList(
+                "SELECT policy_key FROM gym_policy WHERE validated = TRUE ORDER BY policy_key",
+                String.class))
+                .containsExactly(
+                        "GYM_CONDUCT",
+                        "GYM_HOURS_AND_HOLIDAYS",
+                        "LATE_PAYMENT",
+                        "SUBSCRIPTION_RENEWAL");
+        assertThat(jdbc.queryForObject(
+                "SELECT content FROM gym_policy WHERE policy_key = 'GYM_HOURS_AND_HOLIDAYS'",
+                String.class))
+                .contains("Monday through Friday from 06:00 to 22:00", "Saturday and Sunday",
+                        "Tunisian religious public holidays");
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables "
                         + "WHERE table_schema = 'public' AND table_name = 'business_profiles'",

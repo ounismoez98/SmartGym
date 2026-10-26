@@ -27,28 +27,30 @@ public class ProvisioningService {
         java.util.ArrayList<ProvisionedProfile> provisionedProfiles = new java.util.ArrayList<>();
         for (ProvisioningRequest.Profile profile : request.profiles()) {
             switch (profile.profileType().toUpperCase(Locale.ROOT)) {
-                case "MEMBER" -> memberRepository.findByKeycloakUserId(profile.subject())
-                        .ifPresentOrElse(
-                                member -> {
-                                    member.updateIdentity(profile.username(), profile.displayName());
-                                    memberRepository.save(member);
-                                },
-                                () -> memberRepository.save(new Member(
-                                        UUID.randomUUID(),
-                                        profile.subject(),
-                                        profile.username(),
-                                        profile.displayName())));
-                case "EMPLOYEE" -> employeeRepository.findByKeycloakUserId(profile.subject())
-                        .ifPresentOrElse(
-                                employee -> {
-                                    employee.updateIdentity(profile.username(), profile.displayName());
-                                    employeeRepository.save(employee);
-                                },
-                                () -> employeeRepository.save(new Employee(
-                                        UUID.randomUUID(),
-                                        profile.subject(),
-                                        profile.username(),
-                                        profile.displayName())));
+                case "MEMBER" -> {
+                    Member member = memberRepository.findByKeycloakUserId(profile.subject())
+                            .orElseGet(() -> new Member(
+                                    UUID.randomUUID(),
+                                    profile.subject(),
+                                    profile.username(),
+                                    profile.displayName()));
+                    member.updateIdentity(profile.username(), profile.displayName());
+                    Member saved = memberRepository.save(member);
+                    provisionedProfiles.add(new ProvisionedProfile(
+                            profile.subject(), profile.username(), saved.getId(), null));
+                }
+                case "EMPLOYEE" -> {
+                    Employee employee = employeeRepository.findByKeycloakUserId(profile.subject())
+                            .orElseGet(() -> new Employee(
+                                    UUID.randomUUID(),
+                                    profile.subject(),
+                                    profile.username(),
+                                    profile.displayName()));
+                    employee.updateIdentity(profile.username(), profile.displayName());
+                    Employee saved = employeeRepository.save(employee);
+                    provisionedProfiles.add(new ProvisionedProfile(
+                            profile.subject(), profile.username(), null, saved.getId()));
+                }
                 default -> throw new IllegalArgumentException(
                         "Profile type must be MEMBER or EMPLOYEE.");
             }

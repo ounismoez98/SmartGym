@@ -66,6 +66,7 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | `DEV_COACH_PASSWORD` | Local-only password for `gym-coach` | Provisioning script |
    | `DEV_MEMBER_A_PASSWORD` | Local-only password for `member-a` | Provisioning script / E2E fallback |
    | `DEV_MEMBER_B_PASSWORD` | Local-only password for `member-b` | Provisioning script |
+   | `SEED_ACCOUNT_PASSWORD` | Shared password for additional `demo-*` accounts | Project demo seed |
    | `RABBITMQ_USER` | RabbitMQ username | Yes |
    | `RABBITMQ_PASSWORD` | RabbitMQ password | Yes |
    | `TRAINING_DB_USER` | Training database username | No |
@@ -98,6 +99,28 @@ Generate a local provisioning token with:
 The script reads `KEYCLOAK_ADMIN_*`, `PROVISIONING_TOKEN`, and the four
 `DEV_*_PASSWORD` values from the repository `.env` file. Shell variables
 override `.env` when both are set.
+
+To add a larger, synthetic dataset for local exploration, set a unique
+`SEED_ACCOUNT_PASSWORD` in the ignored `.env` file, start the development
+Compose stack, provision the four base accounts with
+`.\scripts\provision-dev.ps1`, then run:
+
+```powershell
+.\scripts\seed-project-demo.ps1
+```
+
+This development-only script ensures 20 accounts (1 admin, 2 coaches, and 17
+members) and creates 190 synthetic database rows across subscriptions/payments,
+feedback/themes, nutrition food/journal/hydration, and training exercises,
+workout history, and sets.
+New accounts are `demo-coach-01` and `demo-member-01` through
+`demo-member-15`; they share the password from `SEED_ACCOUNT_PASSWORD`.
+Existing `gym-admin`, `gym-coach`, `member-a`, and `member-b` passwords are
+not changed. All seeded rows use stable identifiers and are updated on
+reruns; existing unrelated records are not deleted. This script writes
+directly to the local Compose PostgreSQL databases and requires the
+development-only `/api/dev/provision` endpoint. Never use it against a
+production or shared environment.
 
 Account usernames are `gym-admin`, `gym-coach`, `member-a`, and
 `member-b`. The script creates or updates these Keycloak users, applies
@@ -615,6 +638,18 @@ password as the provisioner secret.
   state. Confirmation sends the message to the member email read from the
   database. Local SMTP uses MailHog at `http://localhost:8025` (SMTP port
   `1025`).
+- Assistant explanations also receive active membership plans and active
+  coach/trainer staff records. Validated gym policies are the source for
+  operating hours, courses, and renewal paperwork; these facts are not
+  fabricated when missing. The courses service is not integrated, and an
+  active coach record does not indicate appointment availability.
+- The default validated policies set weekday hours to 06:00–22:00 and
+  Saturday/Sunday hours to 06:00–14:00, with closure on Tunisian religious
+  public holidays officially observed by the authorities. Holiday dates vary
+  and must be checked against the gym's current notice. Other seeded policies
+  cover gym conduct, subscription renewals, and late payments; they do not
+  invent late fees, grace periods, automatic suspension, or paperwork
+  requirements.
 - The assistant does not send member first or last names, email addresses,
   phone numbers, or IDs to Groq. Reminder prompts use the `{{FIRST_NAME}}`
   marker, which the API replaces with the member's first name only after the
