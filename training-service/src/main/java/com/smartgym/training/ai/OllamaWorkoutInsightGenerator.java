@@ -36,7 +36,7 @@ public class OllamaWorkoutInsightGenerator implements WorkoutInsightGenerator {
             ObjectMapper objectMapper,
             @Value("${app.ai.ollama.base-url:http://localhost:11434}") String baseUrl,
             @Value("${app.ai.ollama.model:qwen2.5:3b}") String model,
-            @Value("${app.ai.insights.timeout:30s}") Duration timeout) {
+            @Value("${app.ai.insights.timeout:180s}") Duration timeout) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(5));
         requestFactory.setReadTimeout(timeout);

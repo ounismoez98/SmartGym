@@ -3,11 +3,7 @@ import { authGuard, roleGuard } from './route.guards';
 import { DashboardComponent } from './dashboard.component';
 import { LandingComponent } from './landing.component';
 import { ModuleComponent } from './module.component';
-import { FeedbackComponent } from './feedback.component';
-import { MembershipComponent } from './membership.component';
 import { MessagePageComponent } from './message-page.component';
-import { NutritionWorkspaceComponent } from './nutrition-workspace.component';
-import { CoachNutritionComponent } from './coach-nutrition.component';
 
 const moduleRoles = ['ADMIN', 'COACH', 'MEMBER'];
 const nutritionRoles = ['ADMIN', 'MEMBER'];
@@ -17,7 +13,7 @@ export const appRoutes: Routes = [
   { path: 'dashboard', component: DashboardComponent, canActivate: [authGuard] },
   {
     path: 'membership',
-    component: MembershipComponent,
+    loadComponent: () => import('./membership.component').then((module) => module.MembershipComponent),
     canActivate: [authGuard, roleGuard],
     data: { title: 'Membership', module: 'M1', description: 'Your membership, reservations, and assigned-member access.', roles: moduleRoles }
   },
@@ -47,19 +43,19 @@ export const appRoutes: Routes = [
   },
   {
     path: 'nutrition',
-    component: NutritionWorkspaceComponent,
+    loadComponent: () => import('./nutrition-workspace.component').then((module) => module.NutritionWorkspaceComponent),
     canActivate: [authGuard, roleGuard],
     data: { title: 'Nutrition', module: 'M4', description: 'Nutrition plans and member resources.', roles: nutritionRoles }
   },
   {
     path: 'coach/nutrition',
-    component: CoachNutritionComponent,
+    loadComponent: () => import('./coach-nutrition.component').then((module) => module.CoachNutritionComponent),
     canActivate: [authGuard, roleGuard],
     data: { title: 'Coach Nutrition', module: 'M4', description: 'Review and edit meal suggestions for assigned members.', roles: ['COACH'] }
   },
   {
     path: 'feedback',
-    component: FeedbackComponent,
+    loadComponent: () => import('./feedback.component').then((module) => module.FeedbackComponent),
     canActivate: [authGuard]
   },
   { path: 'forbidden', component: MessagePageComponent, data: { title: 'Access denied', message: 'Your account does not have permission to view this page.' } },

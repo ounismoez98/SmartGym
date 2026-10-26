@@ -73,7 +73,7 @@ test('admin, coach, and member routes render only for allowed roles', async ({ b
       { path: '/courses', heading: 'Courses' },
       { path: '/training', heading: 'Exercise catalogue' },
       { path: '/nutrition', heading: 'nutrition' },
-      { path: '/feedback', heading: 'Member Insights' }
+      { path: '/feedback', heading: 'AI Customer Intelligence & Satisfaction Analytics' }
     ],
     ['/training/programmes', '/training/workouts', '/coach/nutrition']
   );
@@ -89,7 +89,7 @@ test('admin, coach, and member routes render only for allowed roles', async ({ b
       { path: '/training', heading: 'Exercise catalogue' },
       { path: '/training/programmes', heading: 'Training programmes' },
       { path: '/coach/nutrition', heading: 'Support your assigned members' },
-      { path: '/feedback', heading: 'Your Feedback' }
+      { path: '/feedback', heading: 'Your Feedback & Experience' }
     ],
     ['/nutrition', '/training/workouts']
   );
@@ -106,7 +106,7 @@ test('admin, coach, and member routes render only for allowed roles', async ({ b
       { path: '/training/programmes', heading: 'Training programmes' },
       { path: '/training/workouts', heading: 'Workout history' },
       { path: '/nutrition', heading: 'A calmer way to care for your nutrition' },
-      { path: '/feedback', heading: 'Your Feedback' }
+      { path: '/feedback', heading: 'Your Feedback & Experience' }
     ],
     ['/coach/nutrition']
   );

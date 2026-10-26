@@ -71,6 +71,8 @@ has no host port. Browser API calls should use the Nginx `/api/...` URLs.
    | `TRAINING_DB_USER` | Training database username | No |
    | `TRAINING_DB_PASSWORD` | Training database password | No |
    | `OLLAMA_MODEL` | Optional local training AI model | No |
+   | `APP_AI_OLLAMA_TIMEOUT` | Ollama programme-generation request timeout | No |
+   | `APP_AI_INSIGHTS_TIMEOUT` | Ollama workout-insights request timeout | No |
    | `GROQ_API_KEY` | Optional Groq key for feedback analysis | No |
    | `GROQ_MODEL` | Groq model used for feedback analysis | No |
    | `APP_LLM_CONNECT_TIMEOUT` | Feedback-analysis provider connection timeout | No |

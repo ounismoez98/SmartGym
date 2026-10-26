@@ -178,6 +178,8 @@ services:
       SPRING_RABBITMQ_VIRTUAL_HOST: /
       APP_AI_OLLAMA_BASE_URL: http://ollama:11434
       APP_AI_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      APP_AI_OLLAMA_TIMEOUT: ${APP_AI_OLLAMA_TIMEOUT:-180s}
+      APP_AI_INSIGHTS_TIMEOUT: ${APP_AI_INSIGHTS_TIMEOUT:-180s}
     depends_on:
       training-db-init:
         condition: service_completed_successfully

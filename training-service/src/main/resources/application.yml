@@ -50,6 +50,8 @@ app:
       base-url: ${APP_AI_OLLAMA_BASE_URL:http://localhost:11434}
       model: ${APP_AI_OLLAMA_MODEL:qwen2.5:3b}
       timeout: ${APP_AI_OLLAMA_TIMEOUT:90s}
+    insights:
+      timeout: ${APP_AI_INSIGHTS_TIMEOUT:180s}
   membership:
     base-url: ${APP_MEMBERSHIP_BASE_URL:http://localhost:8081}
   security:
