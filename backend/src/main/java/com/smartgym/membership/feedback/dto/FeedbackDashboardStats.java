@@ -12,9 +12,13 @@ public record FeedbackDashboardStats(
         double positivePercentage,
         double neutralPercentage,
         double negativePercentage,
+        long criticalCount,
+        long mediumCount,
+        long lowCount,
         Map<Integer, Long> ratingDistribution,
         List<CategoryStat> categoryBreakdown,
-        List<ThemeStat> commonThemes
+        List<ThemeStat> commonThemes,
+        AiExecutiveReport executiveReport
 ) {
     public record CategoryStat(
             String category,

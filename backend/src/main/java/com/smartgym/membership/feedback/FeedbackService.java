@@ -11,9 +11,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import com.smartgym.membership.feedback.dto.AiAnalysisResult;
+import com.smartgym.membership.feedback.dto.AiExecutiveReport;
 import com.smartgym.membership.feedback.dto.FeedbackDashboardStats;
 import com.smartgym.membership.feedback.dto.FeedbackResponse;
 import com.smartgym.membership.feedback.dto.FeedbackSubmitRequest;
@@ -51,6 +51,9 @@ public class FeedbackService {
                 analysis.sentiment(),
                 analysis.summary(),
                 analysis.themes(),
+                analysis.urgency(),
+                analysis.actionRecommendation(),
+                analysis.confidenceScore(),
                 Instant.now()
         );
 
@@ -71,8 +74,9 @@ public class FeedbackService {
             FeedbackCategory category,
             FeedbackSentiment sentiment,
             Integer rating,
+            FeedbackUrgency urgency,
             String search) {
-        List<Feedback> list = feedbackRepository.findWithFilters(category, sentiment, rating);
+        List<Feedback> list = feedbackRepository.findWithFilters(category, sentiment, rating, urgency);
 
         if (search != null && !search.isBlank()) {
             String lowerSearch = search.trim().toLowerCase(Locale.ROOT);
@@ -80,6 +84,7 @@ public class FeedbackService {
                     .filter(f -> (f.getComment() != null && f.getComment().toLowerCase(Locale.ROOT).contains(lowerSearch))
                             || (f.getMemberName() != null && f.getMemberName().toLowerCase(Locale.ROOT).contains(lowerSearch))
                             || (f.getSummary() != null && f.getSummary().toLowerCase(Locale.ROOT).contains(lowerSearch))
+                            || (f.getActionRecommendation() != null && f.getActionRecommendation().toLowerCase(Locale.ROOT).contains(lowerSearch))
                             || (f.getThemes() != null && f.getThemes().stream().anyMatch(t -> t.toLowerCase(Locale.ROOT).contains(lowerSearch))))
                     .toList();
         }
@@ -99,9 +104,43 @@ public class FeedbackService {
                 feedback.getComment()
         );
 
-        feedback.updateAiAnalysis(analysis.sentiment(), analysis.summary(), analysis.themes());
+        feedback.updateAiAnalysis(
+                analysis.sentiment(),
+                analysis.summary(),
+                analysis.themes(),
+                analysis.urgency(),
+                analysis.actionRecommendation(),
+                analysis.confidenceScore()
+        );
         Feedback saved = feedbackRepository.save(feedback);
         return FeedbackResponse.fromEntity(saved);
+    }
+
+    public List<FeedbackResponse> reanalyzeAllFeedbacks() {
+        List<Feedback> all = feedbackRepository.findAll();
+        for (Feedback feedback : all) {
+            AiAnalysisResult analysis = groqAiService.analyzeFeedback(
+                    feedback.getRating(),
+                    feedback.getCategory(),
+                    feedback.getComment()
+            );
+            feedback.updateAiAnalysis(
+                    analysis.sentiment(),
+                    analysis.summary(),
+                    analysis.themes(),
+                    analysis.urgency(),
+                    analysis.actionRecommendation(),
+                    analysis.confidenceScore()
+            );
+        }
+        feedbackRepository.saveAll(all);
+        return all.stream().map(FeedbackResponse::fromEntity).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public AiExecutiveReport getExecutiveReport() {
+        List<Feedback> all = feedbackRepository.findAllByOrderByCreatedAtDesc();
+        return groqAiService.generateExecutiveReport(all);
     }
 
     public void deleteFeedback(UUID id) {
@@ -122,9 +161,11 @@ public class FeedbackService {
                     .map(cat -> new FeedbackDashboardStats.CategoryStat(
                             cat.name(), cat.getDisplayName(), 0, 0.0, 0, 0, 0))
                     .toList();
+            AiExecutiveReport emptyReport = groqAiService.generateExecutiveReport(List.of());
             return new FeedbackDashboardStats(
                     0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0,
-                    emptyRatings, emptyCategories, List.of());
+                    0, 0, 0,
+                    emptyRatings, emptyCategories, List.of(), emptyReport);
         }
 
         double avgRating = BigDecimal.valueOf(all.stream().mapToInt(Feedback::getRating).average().orElse(0.0))
@@ -138,6 +179,10 @@ public class FeedbackService {
         double positivePct = BigDecimal.valueOf((positive * 100.0) / total).setScale(1, RoundingMode.HALF_UP).doubleValue();
         double neutralPct = BigDecimal.valueOf((neutral * 100.0) / total).setScale(1, RoundingMode.HALF_UP).doubleValue();
         double negativePct = BigDecimal.valueOf((negative * 100.0) / total).setScale(1, RoundingMode.HALF_UP).doubleValue();
+
+        long critical = all.stream().filter(f -> f.getUrgency() == FeedbackUrgency.CRITICAL).count();
+        long medium = all.stream().filter(f -> f.getUrgency() == FeedbackUrgency.MEDIUM).count();
+        long low = all.stream().filter(f -> f.getUrgency() == FeedbackUrgency.LOW || f.getUrgency() == null).count();
 
         Map<Integer, Long> ratingDistribution = new HashMap<>();
         for (int i = 1; i <= 5; i++) {
@@ -179,6 +224,8 @@ public class FeedbackService {
                 .limit(15)
                 .toList();
 
+        AiExecutiveReport executiveReport = groqAiService.generateExecutiveReport(all);
+
         return new FeedbackDashboardStats(
                 total,
                 avgRating,
@@ -188,9 +235,13 @@ public class FeedbackService {
                 positivePct,
                 neutralPct,
                 negativePct,
+                critical,
+                medium,
+                low,
                 ratingDistribution,
                 categoryStats,
-                topThemes
+                topThemes,
+                executiveReport
         );
     }
 }

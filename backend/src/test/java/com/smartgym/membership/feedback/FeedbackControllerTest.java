@@ -268,4 +268,44 @@ class FeedbackControllerTest {
 
         assertThat(feedbackRepository.findById(feedback.getId())).isEmpty();
     }
+
+    @Test
+    void adminCanFetchExecutiveReport() throws Exception {
+        feedbackRepository.save(new Feedback(
+                UUID.randomUUID(), MEMBER_A_SUBJECT, "Member A", 5,
+                FeedbackCategory.CLEANLINESS, "Super clean and pristine facility",
+                FeedbackSentiment.POSITIVE, "Clean facility",
+                List.of("Cleanliness Standards"), null));
+
+        mockMvc.perform(get("/api/feedback/admin/executive-report")
+                        .with(jwt()
+                                .jwt(token -> token.subject(ADMIN_SUBJECT)
+                                        .claim("realm_access", Map.of("roles", List.of("ADMIN"))))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.healthScore").isNumber())
+                .andExpect(jsonPath("$.overallAssessment").isNotEmpty())
+                .andExpect(jsonPath("$.keyStrengths").isArray())
+                .andExpect(jsonPath("$.strategicRecommendations").isArray());
+    }
+
+    @Test
+    void adminCanReanalyzeAllFeedbacks() throws Exception {
+        feedbackRepository.save(new Feedback(
+                UUID.randomUUID(), MEMBER_A_SUBJECT, "Member A", 1,
+                FeedbackCategory.EQUIPMENT, "The cable pulley is snapped and broken, dangerous!",
+                FeedbackSentiment.NEGATIVE, "Cable broken",
+                List.of("Gym Equipment"), null));
+
+        mockMvc.perform(post("/api/feedback/admin/reanalyze-all")
+                        .with(jwt()
+                                .jwt(token -> token.subject(ADMIN_SUBJECT)
+                                        .claim("realm_access", Map.of("roles", List.of("ADMIN"))))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].urgency").value("CRITICAL"))
+                .andExpect(jsonPath("$[0].actionRecommendation").isNotEmpty());
+    }
 }
+

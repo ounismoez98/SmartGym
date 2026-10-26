@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 
 export type FeedbackCategory = 'CLEANLINESS' | 'EQUIPMENT' | 'CLASSES' | 'STAFF' | 'SERVICE';
 export type FeedbackSentiment = 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE';
+export type FeedbackUrgency = 'CRITICAL' | 'MEDIUM' | 'LOW';
 
 export interface FeedbackSubmitRequest {
   rating: number;
@@ -21,6 +22,9 @@ export interface FeedbackResponse {
   sentiment: FeedbackSentiment;
   summary: string;
   themes: string[];
+  urgency: FeedbackUrgency;
+  actionRecommendation: string;
+  confidenceScore: number;
   createdAt: string;
 }
 
@@ -39,6 +43,15 @@ export interface ThemeStat {
   count: number;
 }
 
+export interface AiExecutiveReport {
+  healthScore: number;
+  overallAssessment: string;
+  keyStrengths: string[];
+  criticalIssues: string[];
+  strategicRecommendations: string[];
+  generatedAt: string;
+}
+
 export interface FeedbackDashboardStats {
   totalFeedbacks: number;
   averageRating: number;
@@ -48,9 +61,13 @@ export interface FeedbackDashboardStats {
   positivePercentage: number;
   neutralPercentage: number;
   negativePercentage: number;
+  criticalCount: number;
+  mediumCount: number;
+  lowCount: number;
   ratingDistribution: Record<number, number>;
   categoryBreakdown: CategoryStat[];
   commonThemes: ThemeStat[];
+  executiveReport?: AiExecutiveReport;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -70,11 +87,13 @@ export class FeedbackService {
     category?: string;
     sentiment?: string;
     rating?: number;
+    urgency?: string;
     search?: string;
   }): Observable<FeedbackResponse[]> {
     let params = new HttpParams();
     if (filters?.category) params = params.set('category', filters.category);
     if (filters?.sentiment) params = params.set('sentiment', filters.sentiment);
+    if (filters?.urgency) params = params.set('urgency', filters.urgency);
     if (filters?.rating !== undefined && filters.rating !== null && filters.rating > 0) {
       params = params.set('rating', filters.rating.toString());
     }
@@ -86,6 +105,14 @@ export class FeedbackService {
 
   getDashboardStats(): Observable<FeedbackDashboardStats> {
     return this.http.get<FeedbackDashboardStats>(`${this.baseUrl}/admin/stats`);
+  }
+
+  getExecutiveReport(): Observable<AiExecutiveReport> {
+    return this.http.get<AiExecutiveReport>(`${this.baseUrl}/admin/executive-report`);
+  }
+
+  reanalyzeAllFeedbacks(): Observable<FeedbackResponse[]> {
+    return this.http.post<FeedbackResponse[]>(`${this.baseUrl}/admin/reanalyze-all`, {});
   }
 
   deleteFeedback(id: string): Observable<void> {
