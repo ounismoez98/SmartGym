@@ -3,6 +3,7 @@ import { Component, OnInit, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from './auth.service';
 import {
+  AiExecutiveReport,
   CategoryStat,
   FeedbackCategory,
   FeedbackDashboardStats,
@@ -10,6 +11,7 @@ import {
   FeedbackSentiment,
   FeedbackService,
   FeedbackSubmitRequest,
+  FeedbackUrgency,
   ThemeStat
 } from './feedback.service';
 
@@ -31,12 +33,12 @@ import {
       <main class="content">
         <div class="header-section">
           <div>
-            <p class="eyebrow">FEEDBACK &amp; SATISFACTION</p>
-            <h1>{{ isAdmin ? 'Member Insights & Satisfaction Analysis' : 'Your Feedback & Experience' }}</h1>
+            <p class="eyebrow">{{ isAdmin ? 'EXECUTIVE INTELLIGENCE &amp; DSS' : 'MEMBER SATISFACTION' }}</p>
+            <h1>{{ isAdmin ? 'AI Customer Intelligence & Satisfaction Analytics' : 'Your Feedback & Experience' }}</h1>
             <p class="lead">
               @if (isAdmin) {
-                AI-driven feedback classification with Qwen via Groq API. Real-time sentiment scoring,
-                theme detection, and satisfaction analytics.
+                Enterprise Decision Support System (DSS) powered by Groq LLM inference. Automated root-cause detection,
+                urgency triage, managerial action recommendations, and executive health scoring.
               } @else {
                 Share your gym experience, rate our equipment, classes, and facilities, and help us continuously improve.
               }
@@ -45,7 +47,7 @@ import {
 
           @if (isAdmin) {
             <div class="admin-badge-container">
-              <span class="role-badge">ADMIN VIEW</span>
+              <span class="role-badge">ADMIN DSS VIEW</span>
             </div>
           }
         </div>
@@ -58,24 +60,101 @@ import {
         }
 
         <!-- ============================================== -->
-        <!-- ADMIN DASHBOARD ANALYTICS                      -->
+        <!-- ADMIN DASHBOARD: EXECUTIVE AI BRIEFING & STATS -->
         <!-- ============================================== -->
         @if (isAdmin) {
           <section class="admin-analytics-section" aria-labelledby="analytics-heading">
             <div class="section-title-row">
-              <h2 id="analytics-heading">Executive Satisfaction Dashboard</h2>
-              <button class="button quiet refresh-btn" (click)="loadAdminStats()" [disabled]="isLoadingStats">
-                {{ isLoadingStats ? 'Updating...' : '⟳ Refresh Analytics' }}
-              </button>
+              <h2 id="analytics-heading">Executive Intelligence Dashboard</h2>
+              <div class="action-buttons-group">
+                <button
+                  class="button quiet"
+                  (click)="reanalyzeAllFeedbacks()"
+                  [disabled]="isReanalyzingAll"
+                  title="Re-analyze all reviews through Groq LLM"
+                >
+                  {{ isReanalyzingAll ? '⚡ Batch Processing...' : '⚡ Batch Re-Analyze All' }}
+                </button>
+                <button
+                  class="button quiet refresh-btn"
+                  (click)="loadAdminStats(true)"
+                  [disabled]="isLoadingStats || isRefreshingExecutiveReport"
+                >
+                  {{ isLoadingStats ? 'Updating...' : '⟳ Refresh Analytics' }}
+                </button>
+              </div>
             </div>
+
+            <!-- EXECUTIVE AI BRIEFING HERO CARD -->
+            @if (executiveReport) {
+              <div class="ai-executive-hero">
+                <div class="hero-top">
+                  <div class="hero-title-group">
+                    <span class="ai-chip">✨ GROQ LLM DECISION SUPPORT SYSTEM</span>
+                    <h3>Executive Operational Health Briefing</h3>
+                  </div>
+
+                  <div class="health-gauge" [class]="getHealthScoreClass(executiveReport.healthScore)">
+                    <div class="gauge-val">{{ executiveReport.healthScore }}<span>/100</span></div>
+                    <span class="gauge-label">Health Index</span>
+                  </div>
+                </div>
+
+                <p class="executive-narrative">{{ executiveReport.overallAssessment }}</p>
+
+                <div class="executive-columns">
+                  <!-- Strengths -->
+                  <div class="exec-col strengths-col">
+                    <div class="col-header">
+                      <span class="col-icon">🌟</span>
+                      <h4>Top Operational Strengths</h4>
+                    </div>
+                    <ul class="exec-list">
+                      @for (s of executiveReport.keyStrengths; track s) {
+                        <li>{{ s }}</li>
+                      }
+                    </ul>
+                  </div>
+
+                  <!-- Critical Issues -->
+                  <div class="exec-col issues-col">
+                    <div class="col-header">
+                      <span class="col-icon">⚠️</span>
+                      <h4>Critical Churn Risks &amp; Bottlenecks</h4>
+                    </div>
+                    <ul class="exec-list">
+                      @for (issue of executiveReport.criticalIssues; track issue) {
+                        <li>{{ issue }}</li>
+                      }
+                    </ul>
+                  </div>
+                </div>
+
+                <!-- Strategic Recommendations -->
+                <div class="strategic-roadmap">
+                  <div class="roadmap-header">
+                    <span class="roadmap-icon">🎯</span>
+                    <h4>AI Strategic Action Roadmap for Gym Management</h4>
+                  </div>
+                  <div class="recommendations-grid">
+                    @for (rec of executiveReport.strategicRecommendations; track rec; let idx = $index) {
+                      <div class="recommendation-card">
+                        <span class="rec-num">0{{ idx + 1 }}</span>
+                        <p class="rec-text">{{ rec }}</p>
+                      </div>
+                    }
+                  </div>
+                </div>
+              </div>
+            }
 
             @if (stats) {
               <!-- KPI Cards -->
               <div class="kpi-grid">
                 <div class="kpi-card">
-                  <span class="kpi-label">TOTAL FEEDBACK</span>
+                  <span class="kpi-label">TOTAL REVIEWS</span>
                   <div class="kpi-value">{{ stats.totalFeedbacks }}</div>
-                  <span class="kpi-sub">Total reviews submitted</span>
+                  <span class="kpi-sub">Total submissions</span>
                 </div>
 
                 <div class="kpi-card highlight">
@@ -96,10 +175,10 @@ import {
                   <span class="kpi-sub">{{ stats.positiveCount }} positive reviews</span>
                 </div>
 
-                <div class="kpi-card">
-                  <span class="kpi-label">DETECTED THEMES</span>
-                  <div class="kpi-value">{{ stats.commonThemes.length }}</div>
-                  <span class="kpi-sub">AI theme clusters</span>
+                <div class="kpi-card" [class.kpi-critical]="stats.criticalCount > 0">
+                  <span class="kpi-label">CRITICAL ATTENTION</span>
+                  <div class="kpi-value urgency-val">{{ stats.criticalCount }}</div>
+                  <span class="kpi-sub">{{ stats.criticalCount > 0 ? 'Urgent management action required' : 'No critical flags' }}</span>
                 </div>
               </div>
 
@@ -107,7 +186,7 @@ import {
               <div class="analytics-row">
                 <!-- Sentiment Breakdown -->
                 <div class="analytics-card">
-                  <h3>Sentiment Distribution (Qwen AI)</h3>
+                  <h3>Sentiment Distribution (Groq AI)</h3>
                   <div class="distribution-bars">
                     <div class="dist-row">
                       <div class="dist-header">
@@ -164,8 +243,8 @@ import {
               <div class="analytics-row">
                 <!-- Themes -->
                 <div class="analytics-card">
-                  <h3>Common Feedback Themes</h3>
-                  <p class="card-caption">Extracted automatically by Qwen. Click any theme to filter reviews.</p>
+                  <h3>AI-Extracted Root Themes</h3>
+                  <p class="card-caption">Extracted automatically by Groq LLM. Click any theme tag to filter reviews.</p>
                   <div class="theme-cloud">
                     @for (theme of stats.commonThemes; track theme.theme) {
                       <button
@@ -186,7 +265,7 @@ import {
 
                 <!-- Category Breakdown -->
                 <div class="analytics-card">
-                  <h3>Category Performance</h3>
+                  <h3>Category Operational Performance</h3>
                   <div class="category-grid">
                     @for (cat of stats.categoryBreakdown; track cat.category) {
                       <div class="cat-card" (click)="filterByCategory(cat.category)">
@@ -204,16 +283,16 @@ import {
                 </div>
               </div>
             } @else if (isLoadingStats) {
-              <div class="loading-box">Loading executive analytics...</div>
+              <div class="loading-box">Synthesizing executive intelligence via Groq...</div>
             }
           </section>
 
           <!-- ============================================== -->
-          <!-- ADMIN FEEDBACK MANAGEMENT                      -->
+          <!-- ADMIN FEEDBACK TRIAGE & DEEP AI INSPECTION     -->
           <!-- ============================================== -->
           <section class="feedback-management-section">
             <div class="section-title-row">
-              <h2>All Member Feedback ({{ allFeedbacks.length }})</h2>
+              <h2>Member Reviews &amp; Operational Triage ({{ allFeedbacks.length }})</h2>
               <div class="action-buttons-group">
                 <button
                   type="button"
@@ -228,14 +307,24 @@ import {
             <!-- Filters Bar -->
             <div class="filters-card">
               <div class="filter-item search-filter">
-                <label for="search-input">Search text / theme / member</label>
+                <label for="search-input">Search comments / actions / themes</label>
                 <input
                   id="search-input"
                   type="text"
-                  placeholder="Filter by keyword, name, or theme..."
+                  placeholder="Filter by keyword, member, theme, action..."
                   [value]="filterSearch"
                   (input)="onSearchInput($event)"
                 />
+              </div>
+
+              <div class="filter-item">
+                <label for="urgency-select">Priority / Urgency</label>
+                <select id="urgency-select" [value]="filterUrgency" (change)="onUrgencyChange($event)">
+                  <option value="">All Priorities</option>
+                  <option value="CRITICAL">🔴 Critical Priority</option>
+                  <option value="MEDIUM">🟡 Moderate Priority</option>
+                  <option value="LOW">🟢 Routine / Low</option>
+                </select>
               </div>
 
               <div class="filter-item">
@@ -272,7 +361,7 @@ import {
                 </select>
               </div>
 
-              @if (filterCategory || filterSentiment || filterRating || filterSearch) {
+              @if (filterCategory || filterSentiment || filterRating || filterUrgency || filterSearch) {
                 <div class="filter-item reset-item">
                   <button type="button" class="button quiet reset-btn" (click)="resetFilters()">Clear Filters</button>
                 </div>
@@ -281,23 +370,31 @@ import {
 
             <!-- All Feedback List -->
             @if (isLoadingList) {
-              <div class="loading-box">Loading feedback records...</div>
+              <div class="loading-box">Retrieving feedback records...</div>
             } @else if (allFeedbacks.length === 0) {
               <div class="empty-box">No feedback records match the current criteria.</div>
             } @else {
               <div class="feedback-grid">
                 @for (feedback of allFeedbacks; track feedback.id) {
-                  <article class="feedback-card">
+                  <article class="feedback-card" [class.critical-card]="feedback.urgency === 'CRITICAL'">
                     <header class="card-header">
                       <div class="member-info">
                         <strong class="member-name">{{ feedback.memberName }}</strong>
                         <span class="feedback-date">{{ feedback.createdAt | date: 'mediumDate' }}</span>
                       </div>
                       <div class="header-badges">
+                        <span class="urgency-pill" [class]="feedback.urgency.toLowerCase()">
+                          {{ feedback.urgency === 'CRITICAL' ? '⚠️ URGENT' : feedback.urgency }}
+                        </span>
                         <span class="category-pill">{{ getCategoryDisplayName(feedback.category) }}</span>
                         <span class="sentiment-pill" [class]="feedback.sentiment.toLowerCase()">
                           {{ feedback.sentiment }}
                         </span>
+                        @if (feedback.confidenceScore) {
+                          <span class="confidence-tag" title="Model confidence score">
+                            {{ Math.round(feedback.confidenceScore * 100) }}% AI
+                          </span>
+                        }
                       </div>
                     </header>
 
@@ -308,15 +405,26 @@ import {
                       <span class="rating-num">({{ feedback.rating }}/5)</span>
                     </div>
 
+                    <!-- AI EXECUTIVE SUMMARY -->
                     @if (feedback.summary) {
                       <div class="ai-summary-box">
-                        <span class="ai-tag">✨ Qwen AI Summary:</span>
+                        <span class="ai-tag">✨ Groq AI Executive Summary:</span>
                         <p class="summary-text">{{ feedback.summary }}</p>
                       </div>
                     }
 
+                    <!-- MEMBER VERBATIM QUOTE -->
                     <p class="comment-text">"{{ feedback.comment }}"</p>
 
+                    <!-- AI ACTION RECOMMENDATION -->
+                    @if (feedback.actionRecommendation) {
+                      <div class="action-recommendation-box">
+                        <span class="action-tag">💡 AI Recommended Management Action:</span>
+                        <p class="action-text">{{ feedback.actionRecommendation }}</p>
+                      </div>
+                    }
+
+                    <!-- AI THEMES -->
                     @if (feedback.themes && feedback.themes.length > 0) {
                       <div class="card-themes">
                         @for (theme of feedback.themes; track theme) {
@@ -350,7 +458,7 @@ import {
         }
 
         <!-- ============================================== -->
-        <!-- SUBMIT FEEDBACK SECTION (MEMBERS & ADMINS)    -->
+        <!-- SUBMIT FEEDBACK SECTION (CLEAN MEMBER UX)      -->
         <!-- ============================================== -->
         @if (!isAdmin || showSubmitForm) {
           <section class="submit-feedback-section" aria-labelledby="submit-heading">
@@ -405,7 +513,7 @@ import {
                   id="feedback-comment"
                   class="comment-textarea"
                   rows="4"
-                  placeholder="Tell us what you liked or how we can improve our gym..."
+                  placeholder="Tell us what you enjoyed or how we can improve our gym facilities..."
                   [value]="newComment"
                   (input)="onCommentInput($event)"
                   maxlength="4000"
@@ -424,28 +532,11 @@ import {
                 </button>
               </div>
             </form>
-
-            @if (isAdmin && latestAiSubmission) {
-              <div class="latest-ai-insight" role="region" aria-label="AI Analysis Result">
-                <div class="insight-header">
-                  <span class="ai-badge">✨ Qwen AI Analysis Completed</span>
-                  <span class="sentiment-pill" [class]="latestAiSubmission.sentiment.toLowerCase()">
-                    {{ latestAiSubmission.sentiment }}
-                  </span>
-                </div>
-                <p class="insight-summary"><strong>Summary:</strong> {{ latestAiSubmission.summary }}</p>
-                <div class="card-themes">
-                  @for (t of latestAiSubmission.themes; track t) {
-                    <span class="theme-tag">#{{ t }}</span>
-                  }
-                </div>
-              </div>
-            }
           </section>
         }
 
         <!-- ============================================== -->
-        <!-- MEMBER PERSONAL FEEDBACK HISTORY               -->
+        <!-- MEMBER PERSONAL FEEDBACK HISTORY (NO AI LEAKS) -->
         <!-- ============================================== -->
         @if (!isAdmin) {
           <section class="my-feedback-section" aria-labelledby="history-heading">
@@ -508,7 +599,6 @@ export class FeedbackComponent implements OnInit {
   newComment = '';
   isSubmitting = false;
   showSubmitForm = false;
-  latestAiSubmission: FeedbackResponse | null = null;
 
   readonly categories: { id: FeedbackCategory; label: string }[] = [
     { id: 'EQUIPMENT', label: 'Equipment' },
@@ -520,7 +610,10 @@ export class FeedbackComponent implements OnInit {
 
   // Admin Data
   stats: FeedbackDashboardStats | null = null;
+  executiveReport: AiExecutiveReport | null = null;
   isLoadingStats = false;
+  isRefreshingExecutiveReport = false;
+  isReanalyzingAll = false;
   allFeedbacks: FeedbackResponse[] = [];
   isLoadingList = false;
   reanalyzingId: string | null = null;
@@ -528,6 +621,7 @@ export class FeedbackComponent implements OnInit {
   // Filters
   filterCategory = '';
   filterSentiment = '';
+  filterUrgency = '';
   filterRating = 0;
   filterSearch = '';
 
@@ -572,6 +666,12 @@ export class FeedbackComponent implements OnInit {
     }
   }
 
+  getHealthScoreClass(score: number): string {
+    if (score >= 80) return 'optimal';
+    if (score >= 60) return 'stable';
+    return 'critical';
+  }
+
   getRatingCount(star: number): number {
     return this.stats?.ratingDistribution[star] || 0;
   }
@@ -582,16 +682,42 @@ export class FeedbackComponent implements OnInit {
     return Math.round((count / this.stats.totalFeedbacks) * 100);
   }
 
-  loadAdminStats(): void {
+  loadAdminStats(notifyOnSuccess = false): void {
     this.isLoadingStats = true;
     this.feedbackService.getDashboardStats().subscribe({
       next: (stats) => {
         this.stats = stats;
+        if (stats.executiveReport) {
+          this.executiveReport = stats.executiveReport;
+        }
         this.isLoadingStats = false;
+        if (notifyOnSuccess) {
+          this.showNotification('Executive analytics & intelligence updated successfully.', false);
+        }
       },
       error: () => {
         this.showNotification('Could not load dashboard analytics.', true);
         this.isLoadingStats = false;
+      }
+    });
+  }
+
+  reanalyzeAllFeedbacks(): void {
+    if (!confirm('Re-run Groq LLM inference across all stored feedback to generate updated summaries and action plans?')) {
+      return;
+    }
+
+    this.isReanalyzingAll = true;
+    this.feedbackService.reanalyzeAllFeedbacks().subscribe({
+      next: (updatedList) => {
+        this.isReanalyzingAll = false;
+        this.allFeedbacks = updatedList;
+        this.showNotification(`Successfully re-analyzed all ${updatedList.length} feedback records with Groq AI.`, false);
+        this.loadAdminStats();
+      },
+      error: () => {
+        this.isReanalyzingAll = false;
+        this.showNotification('Failed to batch re-analyze feedback records.', true);
       }
     });
   }
@@ -601,6 +727,7 @@ export class FeedbackComponent implements OnInit {
     this.feedbackService.getAllFeedback({
       category: this.filterCategory || undefined,
       sentiment: this.filterSentiment || undefined,
+      urgency: this.filterUrgency || undefined,
       rating: this.filterRating > 0 ? this.filterRating : undefined,
       search: this.filterSearch || undefined
     }).subscribe({
@@ -618,6 +745,7 @@ export class FeedbackComponent implements OnInit {
   resetFilters(): void {
     this.filterCategory = '';
     this.filterSentiment = '';
+    this.filterUrgency = '';
     this.filterRating = 0;
     this.filterSearch = '';
     this.applyFilters();
@@ -625,6 +753,11 @@ export class FeedbackComponent implements OnInit {
 
   onSearchInput(event: Event): void {
     this.filterSearch = (event.target as HTMLInputElement).value;
+    this.applyFilters();
+  }
+
+  onUrgencyChange(event: Event): void {
+    this.filterUrgency = (event.target as HTMLSelectElement).value;
     this.applyFilters();
   }
 
@@ -682,9 +815,8 @@ export class FeedbackComponent implements OnInit {
     };
 
     this.feedbackService.submitFeedback(req).subscribe({
-      next: (res) => {
+      next: () => {
         this.isSubmitting = false;
-        this.latestAiSubmission = res;
         this.newComment = '';
         this.newRating = 5;
         this.showNotification('Thank you! Your feedback has been submitted successfully.', false);
@@ -706,9 +838,9 @@ export class FeedbackComponent implements OnInit {
   reanalyzeFeedback(id: string): void {
     this.reanalyzingId = id;
     this.feedbackService.reanalyzeFeedback(id).subscribe({
-      next: (updated) => {
+      next: () => {
         this.reanalyzingId = null;
-        this.showNotification('Feedback re-analyzed successfully by Qwen AI.', false);
+        this.showNotification('Feedback re-analyzed successfully by Groq AI.', false);
         this.applyFilters();
         this.loadAdminStats();
       },

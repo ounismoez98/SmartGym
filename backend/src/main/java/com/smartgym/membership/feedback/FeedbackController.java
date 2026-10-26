@@ -3,6 +3,7 @@ package com.smartgym.membership.feedback;
 import java.util.List;
 import java.util.UUID;
 
+import com.smartgym.membership.feedback.dto.AiExecutiveReport;
 import com.smartgym.membership.feedback.dto.FeedbackDashboardStats;
 import com.smartgym.membership.feedback.dto.FeedbackResponse;
 import com.smartgym.membership.feedback.dto.FeedbackSubmitRequest;
@@ -48,13 +49,24 @@ public class FeedbackController {
             @RequestParam(required = false) FeedbackCategory category,
             @RequestParam(required = false) FeedbackSentiment sentiment,
             @RequestParam(required = false) Integer rating,
+            @RequestParam(required = false) FeedbackUrgency urgency,
             @RequestParam(required = false) String search) {
-        return feedbackService.getAllFeedback(category, sentiment, rating, search);
+        return feedbackService.getAllFeedback(category, sentiment, rating, urgency, search);
     }
 
     @GetMapping("/admin/stats")
     public FeedbackDashboardStats getDashboardStats() {
         return feedbackService.getDashboardStats();
+    }
+
+    @GetMapping("/admin/executive-report")
+    public AiExecutiveReport getExecutiveReport() {
+        return feedbackService.getExecutiveReport();
+    }
+
+    @PostMapping("/admin/reanalyze-all")
+    public List<FeedbackResponse> reanalyzeAllFeedback() {
+        return feedbackService.reanalyzeAllFeedbacks();
     }
 
     @PostMapping("/admin/{id}/reanalyze")

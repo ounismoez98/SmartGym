@@ -270,6 +270,18 @@
   actions, published-programme review/publish flow, and session reorder
   persistence were not verified in the browser.
 
+### Feedback module integration
+
+- `/feedback` provides member feedback submission/history and an admin
+  satisfaction dashboard with search, sentiment/theme analysis, re-analysis,
+  and deletion. The API is secured by JWT and derives member ownership from
+  the authenticated subject.
+- AI analysis uses structured Groq output when configured and validated;
+  provider errors/unavailable configuration use the tested local fallback.
+- Main-branch changes add urgency/executive-report support and migration V14.
+  Feedback controller, service, and AI tests cover authorization, validation,
+  and fallback behavior; run the complete backend suite after merges.
+
 ### Important paths
 
 - Start stack: `docker compose up --build -d`

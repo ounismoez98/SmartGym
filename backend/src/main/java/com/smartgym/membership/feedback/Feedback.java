@@ -52,6 +52,16 @@ public class Feedback {
     @Column(name = "theme", length = 100)
     private List<String> themes = new ArrayList<>();
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private FeedbackUrgency urgency = FeedbackUrgency.LOW;
+
+    @Column(name = "action_recommendation", length = 2000)
+    private String actionRecommendation;
+
+    @Column(name = "confidence_score")
+    private Double confidenceScore = 0.95;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -67,6 +77,9 @@ public class Feedback {
             FeedbackSentiment sentiment,
             String summary,
             List<String> themes,
+            FeedbackUrgency urgency,
+            String actionRecommendation,
+            Double confidenceScore,
             Instant createdAt) {
         this.id = id != null ? id : UUID.randomUUID();
         this.subject = subject;
@@ -77,7 +90,25 @@ public class Feedback {
         this.sentiment = sentiment != null ? sentiment : FeedbackSentiment.NEUTRAL;
         this.summary = summary;
         this.themes = themes != null ? new ArrayList<>(themes) : new ArrayList<>();
+        this.urgency = urgency != null ? urgency : FeedbackUrgency.LOW;
+        this.actionRecommendation = actionRecommendation;
+        this.confidenceScore = confidenceScore != null ? confidenceScore : 0.95;
         this.createdAt = createdAt != null ? createdAt : Instant.now();
+    }
+
+    public Feedback(
+            UUID id,
+            String subject,
+            String memberName,
+            int rating,
+            FeedbackCategory category,
+            String comment,
+            FeedbackSentiment sentiment,
+            String summary,
+            List<String> themes,
+            Instant createdAt) {
+        this(id, subject, memberName, rating, category, comment, sentiment, summary, themes,
+                FeedbackUrgency.LOW, null, 0.95, createdAt);
     }
 
     public UUID getId() {
@@ -116,13 +147,38 @@ public class Feedback {
         return themes;
     }
 
+    public FeedbackUrgency getUrgency() {
+        return urgency;
+    }
+
+    public String getActionRecommendation() {
+        return actionRecommendation;
+    }
+
+    public Double getConfidenceScore() {
+        return confidenceScore;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }
 
-    public void updateAiAnalysis(FeedbackSentiment sentiment, String summary, List<String> themes) {
+    public void updateAiAnalysis(
+            FeedbackSentiment sentiment,
+            String summary,
+            List<String> themes,
+            FeedbackUrgency urgency,
+            String actionRecommendation,
+            Double confidenceScore) {
         this.sentiment = sentiment != null ? sentiment : FeedbackSentiment.NEUTRAL;
         this.summary = summary;
         this.themes = themes != null ? new ArrayList<>(themes) : new ArrayList<>();
+        this.urgency = urgency != null ? urgency : FeedbackUrgency.LOW;
+        this.actionRecommendation = actionRecommendation;
+        this.confidenceScore = confidenceScore != null ? confidenceScore : 0.95;
+    }
+
+    public void updateAiAnalysis(FeedbackSentiment sentiment, String summary, List<String> themes) {
+        updateAiAnalysis(sentiment, summary, themes, FeedbackUrgency.LOW, null, 0.95);
     }
 }

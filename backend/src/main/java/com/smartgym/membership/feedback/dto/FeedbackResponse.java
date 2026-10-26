@@ -7,6 +7,7 @@ import java.util.UUID;
 import com.smartgym.membership.feedback.Feedback;
 import com.smartgym.membership.feedback.FeedbackCategory;
 import com.smartgym.membership.feedback.FeedbackSentiment;
+import com.smartgym.membership.feedback.FeedbackUrgency;
 
 public record FeedbackResponse(
         UUID id,
@@ -18,6 +19,9 @@ public record FeedbackResponse(
         FeedbackSentiment sentiment,
         String summary,
         List<String> themes,
+        FeedbackUrgency urgency,
+        String actionRecommendation,
+        Double confidenceScore,
         Instant createdAt
 ) {
     public static FeedbackResponse fromEntity(Feedback feedback) {
@@ -31,6 +35,9 @@ public record FeedbackResponse(
                 feedback.getSentiment(),
                 feedback.getSummary(),
                 feedback.getThemes(),
+                feedback.getUrgency() != null ? feedback.getUrgency() : FeedbackUrgency.LOW,
+                feedback.getActionRecommendation(),
+                feedback.getConfidenceScore() != null ? feedback.getConfidenceScore() : 0.95,
                 feedback.getCreatedAt()
         );
     }
