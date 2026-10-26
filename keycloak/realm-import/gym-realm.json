@@ -39,6 +39,8 @@
         "http://localhost:8088/membership",
         "http://localhost:8088/courses",
         "http://localhost:8088/training",
+        "http://localhost:8088/training/programmes",
+        "http://localhost:8088/training/workouts",
         "http://localhost:8088/nutrition",
         "http://localhost:8088/feedback",
         "http://localhost:8088/forbidden",

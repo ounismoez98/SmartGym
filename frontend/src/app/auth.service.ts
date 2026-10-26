@@ -4,6 +4,7 @@ import Keycloak from 'keycloak-js';
 const applicationRoles = new Set(['ADMIN', 'COACH', 'MEMBER']);
 const knownRoutes = new Set([
   '/', '/dashboard', '/membership', '/courses', '/training', '/nutrition',
+  '/training/programmes', '/training/workouts',
   '/forbidden', '/not-found'
 ]);
 

@@ -24,6 +24,7 @@ public class ProvisioningService {
 
     @Transactional
     public ProvisioningResult provision(ProvisioningRequest request) {
+        java.util.ArrayList<ProvisionedProfile> provisionedProfiles = new java.util.ArrayList<>();
         for (ProvisioningRequest.Profile profile : request.profiles()) {
             switch (profile.profileType().toUpperCase(Locale.ROOT)) {
                 case "MEMBER" -> memberRepository.findByKeycloakUserId(profile.subject())
@@ -69,8 +70,20 @@ public class ProvisioningService {
             }
         }
 
-        return new ProvisioningResult(request.profiles().size(), assignments.size());
+        return new ProvisioningResult(
+                request.profiles().size(),
+                assignments.size(),
+                List.copyOf(provisionedProfiles));
     }
 
-    public record ProvisioningResult(int profilesProcessed, int assignmentsProcessed) {}
+    public record ProvisioningResult(
+            int profilesProcessed,
+            int assignmentsProcessed,
+            List<ProvisionedProfile> profiles) {}
+
+    public record ProvisionedProfile(
+            String subject,
+            String username,
+            java.util.UUID memberProfileId,
+            java.util.UUID employeeProfileId) {}
 }
